@@ -4,6 +4,8 @@ import os
 import sys
 from typing import Optional
 
+from yandex_music.exceptions import NotFoundError
+
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import AppConfig
 from yandex_music_og_songs.playlist import scan_playlists
@@ -34,13 +36,26 @@ def cmd_list(token: Optional[str]) -> None:
     for p in playlists:
         count = p.track_count or 0
         print(f"{p.kind:<8} {count:<8} {p.title}")
+    print()
+    print("Для скана используй KIND (первый столбец), не число треков.")
+    print("Пример: .venv/bin/python -m yandex_music_og_songs scan 1020")
 
 
 def cmd_scan(token: Optional[str], kind: Optional[int]) -> None:
     config = AppConfig()
     client = YandexMusicClient(_get_token(token))
     kinds = [kind] if kind is not None else None
-    results = scan_playlists(client, config, kinds=kinds)
+    try:
+        results = scan_playlists(client, config, kinds=kinds)
+    except NotFoundError:
+        print(f"Плейлист kind={kind} не найден.", file=sys.stderr)
+        print(
+            "Частая ошибка: перепутали KIND и число треков.\n"
+            "Запусти list — KIND это ПЕРВЫЙ столбец.\n"
+            "Пример: «Новый плейлист» → kind=1020 (не 301).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if not results:
         print("Плейлисты не найдены. Сначала: python -m yandex_music_og_songs list", file=sys.stderr)
