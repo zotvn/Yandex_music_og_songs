@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Optional
+
+from yandex_music_og_songs.models import ArtistCandidate, PlaylistScanResult, ScannedTrack, TrackStatus
+from yandex_music_og_songs.normalizer import normalize_text
+
+
+_CHOICE_RE = re.compile(r"^\s*(\d+)\s*:\s*(\S+)\s*$")
+
+
+@dataclass(frozen=True)
+class UserChoice:
+    track_number: int
+    value: str
+
+
+def write_choices_template(result: PlaylistScanResult, path: Path) -> None:
+    lines = [
+        "# Выбери исполнителя для треков ниже.",
+        "# Формат: номер: номер_варианта   или   номер: Имя Артиста",
+        "# Пример: 28: 1",
+        "",
+    ]
+
+    for item in result.tracks:
+        if item.status != TrackStatus.CHOOSE:
+            continue
+        lines.append(f"{item.index + 1}. {item.track.artist} - {item.track.title}")
+        for idx, candidate in enumerate(item.artist_candidates, start=1):
+            sources = ", ".join(candidate.sources)
+            lines.append(f"  {idx}) {candidate.artist} [{sources}]")
+        lines.append("")
+
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def parse_choices(path: Path) -> list[UserChoice]:
+    choices: list[UserChoice] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _CHOICE_RE.match(line)
+        if not match:
+            continue
+        choices.append(UserChoice(track_number=int(match.group(1)), value=match.group(2)))
+    return choices
+
+
+def _pick_candidate(candidates: list[ArtistCandidate], value: str) -> Optional[str]:
+    if value.isdigit():
+        index = int(value) - 1
+        if 0 <= index < len(candidates):
+            return candidates[index].artist
+        return None
+
+    best_name: Optional[str] = None
+    best_score = 0.0
+    for candidate in candidates:
+        score = SequenceMatcher(None, normalize_text(value), normalize_text(candidate.artist)).ratio()
+        if score > best_score:
+            best_score = score
+            best_name = candidate.artist
+    if best_score >= 0.75:
+        return best_name
+    return None
+
+
+def apply_choices(result: PlaylistScanResult, choices: list[UserChoice]) -> PlaylistScanResult:
+    by_number = {choice.track_number: choice for choice in choices}
+    updated: list[ScannedTrack] = []
+
+    for item in result.tracks:
+        choice = by_number.get(item.index + 1)
+        if item.status != TrackStatus.CHOOSE or choice is None:
+            updated.append(item)
+            continue
+
+        picked = _pick_candidate(item.artist_candidates, choice.value)
+        if not picked:
+            updated.append(item)
+            continue
+
+        from yandex_music_og_songs.artist_resolver import _similarity
+
+        if _similarity(item.track.artist, picked) >= 0.82:
+            status = TrackStatus.ORIGINAL
+            reasons: list[str] = []
+        else:
+            status = TrackStatus.FAKE
+            reasons = [f"wrong_artist:{picked}", "picked_by_user"]
+
+        updated.append(
+            ScannedTrack(
+                index=item.index,
+                track=item.track,
+                status=status,
+                reasons=reasons,
+                artist_candidates=item.artist_candidates,
+                expected_artist=picked,
+            )
+        )
+
+    return PlaylistScanResult(
+        kind=result.kind,
+        title=result.title,
+        track_count=result.track_count,
+        tracks=updated,
+    )

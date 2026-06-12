@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
 from yandex_music import Client, Playlist, Track
@@ -42,20 +43,23 @@ class YandexMusicClient:
         if not shorts:
             return []
 
-        track_ids = [short.track_id for short in shorts if short is not None]
-        fetched: list[Track] = []
-
-        for offset in range(0, len(track_ids), _BATCH_SIZE):
-            chunk = track_ids[offset : offset + _BATCH_SIZE]
-            batch = self._client.tracks(chunk)
-            if batch:
-                fetched.extend(batch)
-
-        by_id = {str(track.id): track for track in fetched}
         result: list[Optional[Track]] = []
-        for short in shorts:
-            if short is None:
-                result.append(None)
-                continue
-            result.append(by_id.get(str(short.id)))
+        total_batches = (len(shorts) + _BATCH_SIZE - 1) // _BATCH_SIZE
+
+        for batch_index, offset in enumerate(range(0, len(shorts), _BATCH_SIZE)):
+            chunk_shorts = shorts[offset : offset + _BATCH_SIZE]
+            chunk_ids = [short.track_id for short in chunk_shorts if short is not None]
+            print(
+                f"Загрузка треков {offset + 1}-{offset + len(chunk_shorts)} / {len(shorts)} "
+                f"(пакет {batch_index + 1}/{total_batches})...",
+                file=sys.stderr,
+            )
+            batch = self._client.tracks(chunk_ids) if chunk_ids else []
+            batch = batch or []
+            batch_iter = iter(batch)
+            for short in chunk_shorts:
+                if short is None:
+                    result.append(None)
+                    continue
+                result.append(next(batch_iter, None))
         return result

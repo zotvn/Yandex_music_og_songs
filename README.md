@@ -1,8 +1,6 @@
 # Yandex Music OG Songs
 
-Сканирует плейлисты Яндекс Музыки, находит фейки и готовит список на замену.
-
-## Установка (Arch Linux)
+## Установка
 
 ```bash
 git clone https://github.com/zotvn/Yandex_music_og_songs.git
@@ -14,44 +12,45 @@ export YANDEX_MUSIC_TOKEN="ваш_токен"
 ## Команды
 
 ```bash
-# список плейлистов (KIND — первый столбец)
+# список плейлистов
 .venv/bin/python -m yandex_music_og_songs list
 
-# скан с авто-детектом фейков
-.venv/bin/python -m yandex_music_og_songs scan 1020
-
-# экспорт в txt без меток FAKE/OK
+# быстрый экспорт списка (без проверки артиста)
 .venv/bin/python -m yandex_music_og_songs export 1020 songs.txt
 
-# экспорт для проверки нейронкой ([REPLACE] у найденных фейков)
-.venv/bin/python -m yandex_music_og_songs review 1020 review.txt
+# полный скан: Яндекс + MusicBrainz
+.venv/bin/python -m yandex_music_og_songs scan 1020
 
-# после правки файла — применить метки [REPLACE]
-.venv/bin/python -m yandex_music_og_songs import 1020 review.txt
+# если в конце [????] — выбери исполнителя
+.venv/bin/python -m yandex_music_og_songs choose 1020 choices.txt
 ```
 
-## Формат review.txt
+## Выбор исполнителя
+
+После `scan` создаётся `choices.txt`:
 
 ```
-# Отметь [REPLACE] у треков для замены
-1. Artist - Song [3:00]
-28. [REPLACE] TommyMuzzic - back to friends [3:19]
+28. TommyMuzzic - back to friends
+  1) sombr [yandex, musicbrainz]
+  2) TommyMuzzic [yandex]
 ```
 
-Добавь `[REPLACE]` к любым трекам, которые нейронка нашла. `import` покажет финальный план замены.
+Запиши выбор:
 
-## Что считается фейком
+```
+28: 1
+```
 
-- cover, radio edit, karaoke в version/title
-- чужой артист (сверка с каталогом Яндекса)
-- `OWN_REPLACED_TO_UGC`
+Потом:
 
-**Не фейк:**
-- твои загрузки (user upload)
-- официальные версии (Arcane, soundtrack, remix)
+```bash
+.venv/bin/python -m yandex_music_og_songs choose 1020 choices.txt
+```
 
-## Токен
+## Статусы
 
-Получить: https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d
+- `[OK]` — исполнитель совпал с интернетом
+- `[FAKE]` — найден другой исполнитель
+- `[????]` — несколько вариантов, нужен твой выбор
 
-Отозвать: https://id.yandex.ru/security → Приложения → отключить
+Твои загрузки не помечаются как фейк.

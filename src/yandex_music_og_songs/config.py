@@ -44,31 +44,13 @@ class DetectionConfig(BaseModel):
     )
     treat_ugc_as_fake: bool = False
     treat_replaced_to_ugc: bool = True
-    duration_shorter_threshold: float = 0.15
-    artist_check_rate_limit: float = 0.25
-
-
-class ArtistWhitelistEntry(BaseModel):
-    expected: str
-    allowed: list[str]
-
-
-class ArtistConfig(BaseModel):
-    mode: Literal["off", "optional", "strict", "warn_only"] = "strict"
-    fuzzy_threshold: float = 0.85
-    whitelist: list[ArtistWhitelistEntry] = Field(default_factory=list)
-
-
-class ApplyConfig(BaseModel):
-    dry_run: bool = True
+    artist_check_rate_limit: float = 0.15
 
 
 class AppConfig(BaseModel):
     token_env: str = "YANDEX_MUSIC_TOKEN"
     playlists: PlaylistsConfig = Field(default_factory=PlaylistsConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
-    artist: ArtistConfig = Field(default_factory=ArtistConfig)
-    apply: ApplyConfig = Field(default_factory=ApplyConfig)
 
     def get_token(self, override: Optional[str] = None) -> str:
         if override:

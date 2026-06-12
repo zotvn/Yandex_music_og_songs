@@ -8,6 +8,7 @@ from typing import Optional
 class TrackStatus(str, Enum):
     ORIGINAL = "original"
     FAKE = "fake"
+    CHOOSE = "choose"
 
 
 @dataclass(frozen=True)
@@ -26,12 +27,21 @@ class TrackRef:
         return f"{self.track_id}:{self.album_id}"
 
 
+@dataclass(frozen=True)
+class ArtistCandidate:
+    artist: str
+    sources: tuple[str, ...]
+    score: float
+
+
 @dataclass
 class ScannedTrack:
     index: int
     track: TrackRef
     status: TrackStatus
     reasons: list[str] = field(default_factory=list)
+    artist_candidates: list[ArtistCandidate] = field(default_factory=list)
+    expected_artist: Optional[str] = None
 
 
 @dataclass
@@ -48,3 +58,7 @@ class PlaylistScanResult:
     @property
     def original_count(self) -> int:
         return sum(1 for t in self.tracks if t.status == TrackStatus.ORIGINAL)
+
+    @property
+    def choose_count(self) -> int:
+        return sum(1 for t in self.tracks if t.status == TrackStatus.CHOOSE)

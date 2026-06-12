@@ -28,7 +28,12 @@ def format_plain_line(item: ScannedTrack) -> str:
 
 
 def format_review_line(item: ScannedTrack) -> str:
-    tag = "[REPLACE] " if item.status == TrackStatus.FAKE else ""
+    if item.status == TrackStatus.FAKE:
+        tag = "[REPLACE] "
+    elif item.status == TrackStatus.CHOOSE:
+        tag = "[CHOOSE] "
+    else:
+        tag = ""
     return (
         f"{item.index + 1}. {tag}{format_track_label(item)} "
         f"[{format_duration(item.track.duration_ms)}]"

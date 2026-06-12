@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Iterable
 
 from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, TrackStatus
@@ -19,14 +18,43 @@ def format_track_label(item: ScannedTrack) -> str:
     return f"{item.track.artist} - {item.track.title}{version}"
 
 
+def _status_label(status: TrackStatus) -> str:
+    if status == TrackStatus.FAKE:
+        return "FAKE"
+    if status == TrackStatus.CHOOSE:
+        return "????"
+    return "OK"
+
+
 def _track_line(item: ScannedTrack) -> str:
-    status = "FAKE" if item.status == TrackStatus.FAKE else "OK"
     reasons = f" ({', '.join(item.reasons)})" if item.reasons else ""
+    expected = f" -> {item.expected_artist}" if item.expected_artist else ""
     return (
-        f"{item.index + 1:>4}. [{status:<4}] "
+        f"{item.index + 1:>4}. [{_status_label(item.status):<4}] "
         f"{format_track_label(item)} "
-        f"[{format_duration(item.track.duration_ms)}]{reasons}"
+        f"[{format_duration(item.track.duration_ms)}]{expected}{reasons}"
     )
+
+
+def _format_choices_section(result: PlaylistScanResult) -> list[str]:
+    choose_tracks = [item for item in result.tracks if item.status == TrackStatus.CHOOSE]
+    if not choose_tracks:
+        return []
+
+    lines = [
+        "",
+        "=" * 72,
+        "НУЖЕН ВЫБОР ИСПОЛНИТЕЛЯ",
+        "Сохрани в choices.txt и запусти: choose KIND choices.txt",
+        "=" * 72,
+    ]
+    for item in choose_tracks:
+        lines.append(f"{item.index + 1}. {format_track_label(item)}")
+        for idx, candidate in enumerate(item.artist_candidates, start=1):
+            sources = ", ".join(candidate.sources)
+            lines.append(f"     {idx}) {candidate.artist} [{sources}]")
+    lines.append("")
+    return lines
 
 
 def format_scan_text(results: Iterable[PlaylistScanResult]) -> str:
@@ -35,41 +63,11 @@ def format_scan_text(results: Iterable[PlaylistScanResult]) -> str:
         lines.append(f"Playlist: {result.title} (kind={result.kind})")
         lines.append(
             f"Tracks: {result.track_count} | "
-            f"original: {result.original_count} | fake: {result.fake_count}"
+            f"ok: {result.original_count} | fake: {result.fake_count} | choose: {result.choose_count}"
         )
         lines.append("-" * 72)
         for item in result.tracks:
             lines.append(_track_line(item))
+        lines.extend(_format_choices_section(result))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
-
-
-def format_scan_json(results: Iterable[PlaylistScanResult]) -> str:
-    payload = []
-    for result in results:
-        payload.append(
-            {
-                "kind": result.kind,
-                "title": result.title,
-                "track_count": result.track_count,
-                "original_count": result.original_count,
-                "fake_count": result.fake_count,
-                "tracks": [
-                    {
-                        "index": item.index,
-                        "status": item.status.value,
-                        "reasons": item.reasons,
-                        "track_id": item.track.track_id,
-                        "album_id": item.track.album_id,
-                        "artist": item.track.artist,
-                        "title": item.track.title,
-                        "version": item.track.version,
-                        "duration_ms": item.track.duration_ms,
-                        "track_source": item.track.track_source,
-                        "is_user_upload": item.track.is_user_upload,
-                    }
-                    for item in result.tracks
-                ],
-            }
-        )
-    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"

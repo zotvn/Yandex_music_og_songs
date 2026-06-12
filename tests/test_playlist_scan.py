@@ -32,7 +32,7 @@ def test_scan_playlist_marks_fake_and_original():
     client.playlist_track_shorts.return_value = playlist.tracks
     client.fetch_full_tracks.return_value = [fake_track, original_track]
 
-    result = scan_playlist(client, playlist, AppConfig())
+    result = scan_playlist(client, playlist, AppConfig(), artist_check=False)
 
     assert result.kind == 42
     assert result.track_count == 2
