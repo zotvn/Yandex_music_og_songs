@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Literal, Optional
 
-import yaml
 from pydantic import BaseModel, Field
 
 
@@ -77,14 +75,5 @@ class AppConfig(BaseModel):
         return token
 
 
-def load_config(path: Optional[Path] = None) -> AppConfig:
-    if path is None:
-        return AppConfig()
-    with path.open(encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return AppConfig.model_validate(data)
-
-
-def default_config_yaml() -> str:
-    example = Path(__file__).resolve().parents[2] / "config.example.yaml"
-    return example.read_text(encoding="utf-8")
+def load_config() -> AppConfig:
+    return AppConfig()
