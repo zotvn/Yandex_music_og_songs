@@ -55,8 +55,11 @@ def _app_config(workers: Optional[int] = None) -> AppConfig:
     if workers is not None:
         config.performance = PerformanceConfig(
             track_workers=workers,
-            artist_workers=max(workers * 2, 4),
+            artist_workers=max(workers * 2, 8),
             track_batch_size=config.performance.track_batch_size,
+            musicbrainz_mode=config.performance.musicbrainz_mode,
+            artist_disk_cache=config.performance.artist_disk_cache,
+            reuse_scan_cache=config.performance.reuse_scan_cache,
         )
     return config
 
@@ -174,7 +177,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(
             "  list\n"
             "  export KIND file.txt\n"
-            "  scan KIND [--workers N]  результат сразу по каждому треку\n"
+            "  scan KIND [--workers N]  быстрый скан (кэш + умный MusicBrainz)\n"
             "  choose KIND choices.txt\n"
             "  import KIND file.txt\n"
             "\n"

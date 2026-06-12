@@ -4,7 +4,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -81,6 +81,29 @@ def _search_musicbrainz(title: str) -> list[str]:
     return artists
 
 
+def yandex_is_conclusive(yandex: list[str]) -> bool:
+    """Yandex alone is enough when search results clearly agree on the artist."""
+    if not yandex:
+        return False
+
+    counts = Counter(normalize_text(name) for name in yandex)
+    if len(counts) == 1:
+        return True
+
+    top_count = counts.most_common(1)[0][1]
+    total = len(yandex)
+    if top_count >= 2 and top_count / total >= 0.6 and len(counts) <= 3:
+        return True
+
+    return False
+
+
+def needs_musicbrainz(yandex: list[str], *, always: bool = False) -> bool:
+    if always:
+        return True
+    return not yandex_is_conclusive(yandex)
+
+
 def _build_candidates(yandex: list[str], musicbrainz: list[str]) -> list[ArtistCandidate]:
     scores: dict[str, float] = defaultdict(float)
     sources: dict[str, set[str]] = defaultdict(set)
@@ -116,17 +139,18 @@ def lookup_artists(
     title: str,
     detection: DetectionConfig,
     cache: dict[str, list[ArtistCandidate]],
+    *,
+    musicbrainz_mode: str = "auto",
 ) -> list[ArtistCandidate]:
     key = normalize_text(base_title(title, detection.title_suffix_patterns))
     if key in cache:
         return cache[key]
 
     clean_title = base_title(title, detection.title_suffix_patterns)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        yandex_future = pool.submit(_search_yandex, client, clean_title, detection)
-        mb_future = pool.submit(_search_musicbrainz, clean_title)
-        yandex = yandex_future.result()
-        musicbrainz = mb_future.result()
+    yandex = _search_yandex(client, clean_title, detection)
+    musicbrainz: list[str] = []
+    if needs_musicbrainz(yandex, always=musicbrainz_mode == "always"):
+        musicbrainz = _search_musicbrainz(clean_title)
 
     candidates = _build_candidates(yandex, musicbrainz)
     cache[key] = candidates

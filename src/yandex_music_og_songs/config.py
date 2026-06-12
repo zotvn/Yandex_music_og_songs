@@ -13,9 +13,12 @@ class PlaylistsConfig(BaseModel):
 
 
 class PerformanceConfig(BaseModel):
-    track_workers: int = 4
-    artist_workers: int = 8
-    track_batch_size: int = 100
+    track_workers: int = 8
+    artist_workers: int = 16
+    track_batch_size: int = 150
+    musicbrainz_mode: Literal["auto", "always", "never"] = "auto"
+    artist_disk_cache: bool = True
+    reuse_scan_cache: bool = True
 
 
 class DetectionConfig(BaseModel):

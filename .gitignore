@@ -10,3 +10,4 @@ build/
 venv/
 scan_*.json
 choices.txt
+.cache/

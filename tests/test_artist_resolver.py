@@ -1,6 +1,12 @@
 from unittest.mock import MagicMock, patch
 
-from yandex_music_og_songs.artist_resolver import _build_candidates, resolve_track_artist
+from yandex_music_og_songs.artist_resolver import (
+    _build_candidates,
+    lookup_artists,
+    needs_musicbrainz,
+    resolve_track_artist,
+    yandex_is_conclusive,
+)
 from yandex_music_og_songs.config import DetectionConfig
 from yandex_music_og_songs.models import TrackRef, TrackStatus
 
@@ -10,6 +16,26 @@ def test_build_candidates_merges_sources():
     assert candidates[0].artist in {"sombr", "Sombr"}
     assert "yandex" in candidates[0].sources
     assert len(candidates) >= 2
+
+
+def test_yandex_conclusive_when_unanimous():
+    assert yandex_is_conclusive(["sombr", "sombr", "Sombr"]) is True
+    assert yandex_is_conclusive(["A", "B"]) is False
+    assert yandex_is_conclusive([]) is False
+
+
+def test_needs_musicbrainz_only_when_ambiguous():
+    assert needs_musicbrainz(["sombr", "sombr", "sombr"]) is False
+    assert needs_musicbrainz([]) is True
+    assert needs_musicbrainz(["A", "B", "A", "B"]) is True
+
+
+def test_lookup_skips_musicbrainz_when_conclusive():
+    client = MagicMock()
+    with patch("yandex_music_og_songs.artist_resolver._search_yandex", return_value=["sombr", "sombr"]):
+        with patch("yandex_music_og_songs.artist_resolver._search_musicbrainz") as mb:
+            lookup_artists(client, "back to friends", DetectionConfig(), {})
+    mb.assert_not_called()
 
 
 def test_resolve_wrong_artist_when_single_candidate():
