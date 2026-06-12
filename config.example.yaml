@@ -1,0 +1,36 @@
+token_env: YANDEX_MUSIC_TOKEN
+
+playlists:
+  mode: all          # all | selected | exclude
+  kinds: []
+  exclude_kinds: []
+
+detection:
+  fake_version_patterns:
+    - radio\s*edit
+    - cover
+    - karaoke
+    - tribute
+    - instrumental
+    - sped\s*up
+    - slowed
+    - nightcore
+    - \b8d\b
+  keep_version_patterns:
+    - remix
+    - acoustic
+  title_suffix_patterns:
+    - '\(cover\)'
+    - '\(radio edit\)'
+    - '\[karaoke\]'
+  treat_ugc_as_fake: true
+  treat_replaced_to_ugc: true
+  duration_shorter_threshold: 0.15
+
+artist:
+  mode: optional     # off | optional | strict | warn_only
+  fuzzy_threshold: 0.85
+  whitelist: []
+
+apply:
+  dry_run: true
