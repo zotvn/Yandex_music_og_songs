@@ -6,7 +6,7 @@ from typing import Iterable
 from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, TrackStatus
 
 
-def _format_duration(duration_ms: int | None) -> str:
+def format_duration(duration_ms: int | None) -> str:
     if not duration_ms:
         return "-"
     total_seconds = duration_ms // 1000
@@ -14,14 +14,18 @@ def _format_duration(duration_ms: int | None) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
+def format_track_label(item: ScannedTrack) -> str:
+    version = f" [{item.track.version}]" if item.track.version else ""
+    return f"{item.track.artist} - {item.track.title}{version}"
+
+
 def _track_line(item: ScannedTrack) -> str:
     status = "FAKE" if item.status == TrackStatus.FAKE else "OK"
-    version = f" [{item.track.version}]" if item.track.version else ""
     reasons = f" ({', '.join(item.reasons)})" if item.reasons else ""
     return (
         f"{item.index + 1:>4}. [{status:<4}] "
-        f"{item.track.artist} - {item.track.title}{version} "
-        f"[{_format_duration(item.track.duration_ms)}]{reasons}"
+        f"{format_track_label(item)} "
+        f"[{format_duration(item.track.duration_ms)}]{reasons}"
     )
 
 

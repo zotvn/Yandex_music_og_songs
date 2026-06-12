@@ -5,10 +5,11 @@ from typing import Iterable, Optional
 
 from yandex_music import Playlist, Track
 
+from yandex_music_og_songs.artist_check import check_wrong_artist
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import AppConfig
 from yandex_music_og_songs.detector import detect_track
-from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, TrackRef
+from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, TrackRef, TrackStatus
 from yandex_music_og_songs.normalizer import primary_artist
 
 
@@ -49,12 +50,15 @@ def scan_playlist(
     client: YandexMusicClient,
     playlist: Playlist,
     config: AppConfig,
+    *,
+    artist_check: bool = True,
 ) -> PlaylistScanResult:
     shorts = client.playlist_track_shorts(playlist)
     if shorts:
         print(f"Загрузка {len(shorts)} треков...", file=sys.stderr)
     full_tracks = client.fetch_full_tracks(shorts)
     scanned: list[ScannedTrack] = []
+    artist_cache: dict[str, Optional[str]] = {}
 
     for index, track in enumerate(full_tracks):
         if track is None:
@@ -66,6 +70,19 @@ def scan_playlist(
 
         track_ref = _track_ref_from_yandex(track, album_id)
         status, reasons = detect_track(track_ref, config.detection)
+
+        if status == TrackStatus.ORIGINAL and artist_check:
+            if wrong := check_wrong_artist(
+                client,
+                track_ref,
+                config.artist,
+                config.detection,
+                artist_cache,
+                config.detection.artist_check_rate_limit,
+            ):
+                status = TrackStatus.FAKE
+                reasons.append(wrong)
+
         scanned.append(
             ScannedTrack(
                 index=index,
@@ -87,10 +104,15 @@ def scan_playlists(
     client: YandexMusicClient,
     config: AppConfig,
     kinds: Optional[Iterable[int]] = None,
+    *,
+    artist_check: bool = True,
 ) -> list[PlaylistScanResult]:
     if kinds is not None:
         playlists = [client.get_playlist(kind) for kind in kinds]
     else:
         playlists = select_playlists(client, config)
 
-    return [scan_playlist(client, playlist, config) for playlist in playlists]
+    return [
+        scan_playlist(client, playlist, config, artist_check=artist_check)
+        for playlist in playlists
+    ]

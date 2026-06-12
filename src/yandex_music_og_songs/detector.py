@@ -29,8 +29,6 @@ def detect_track(track: TrackRef, config: DetectionConfig) -> tuple[TrackStatus,
         if version and not _is_kept_version(version, config.keep_version_patterns):
             if matched := _matches_any_pattern(version, config.fake_version_patterns):
                 reasons.append(f"version:{matched}")
-            else:
-                reasons.append(f"version:{version}")
 
     if matched := _matches_any_pattern(track.title, config.title_suffix_patterns):
         reasons.append(f"title_suffix:{matched}")

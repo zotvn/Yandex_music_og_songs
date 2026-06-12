@@ -1,108 +1,57 @@
 # Yandex Music OG Songs
 
-Сканирует плейлисты Яндекс Музыки и показывает фейковые треки (cover, radio edit, загрузки и т.д.).
+Сканирует плейлисты Яндекс Музыки, находит фейки и готовит список на замену.
 
-## 1. Скачать
+## Установка (Arch Linux)
 
 ```bash
 git clone https://github.com/zotvn/Yandex_music_og_songs.git
 cd Yandex_music_og_songs
-```
-
-## 2. Установить
-
-На **Arch Linux** (и многих других дистрибутивах) нельзя ставить пакеты в системный Python.
-Используй виртуальное окружение:
-
-```bash
-# один раз — автоматически
-chmod +x setup.sh
-./setup.sh
-```
-
-Или вручную:
-
-```bash
-python -m venv .venv
-.venv/bin/pip install -e .
-```
-
-Дальше всегда запускай через `.venv/bin/python` (не просто `python`).
-
-## 3. Получить токен
-
-1. Открой https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d
-2. Войди в аккаунт Яндекса
-3. Скопируй `access_token=...` из адресной строки (до символа `&`)
-
-## 4. Запустить
-
-```bash
+chmod +x setup.sh && ./setup.sh
 export YANDEX_MUSIC_TOKEN="ваш_токен"
+```
 
-# список плейлистов
+## Команды
+
+```bash
+# список плейлистов (KIND — первый столбец)
 .venv/bin/python -m yandex_music_og_songs list
 
-# скан одного плейлиста (KIND — число из list или из URL)
-.venv/bin/python -m yandex_music_og_songs scan 123
+# скан с авто-детектом фейков
+.venv/bin/python -m yandex_music_og_songs scan 1020
 
-# скан всех плейлистов
-.venv/bin/python -m yandex_music_og_songs scan
+# экспорт в txt без меток FAKE/OK
+.venv/bin/python -m yandex_music_og_songs export 1020 songs.txt
+
+# экспорт для проверки нейронкой ([REPLACE] у найденных фейков)
+.venv/bin/python -m yandex_music_og_songs review 1020 review.txt
+
+# после правки файла — применить метки [REPLACE]
+.venv/bin/python -m yandex_music_og_songs import 1020 review.txt
 ```
 
-Токен можно передать в команде:
-
-```bash
-.venv/bin/python -m yandex_music_og_songs scan 123 --token "ваш_токен"
-```
-
-### Пример вывода
+## Формат review.txt
 
 ```
-KIND     ТРЕКОВ   НАЗВАНИЕ
---------------------------------------------------
-3        42       Мой плейлист
+# Отметь [REPLACE] у треков для замены
+1. Artist - Song [3:00]
+28. [REPLACE] TommyMuzzic - back to friends [3:19]
 ```
 
-```
-Playlist: Мой плейлист (kind=3)
-Tracks: 42 | original: 38 | fake: 4
-------------------------------------------------------------------------
-   1. [FAKE] Artist - Song (Cover) [3:20]
-   2. [OK  ] Artist - Real Song [3:45]
-```
+Добавь `[REPLACE]` к любым трекам, которые нейронка нашла. `import` покажет финальный план замены.
 
-- `[OK]` — похоже на оригинал
-- `[FAKE]` — похоже на фейк
+## Что считается фейком
 
-## Где взять KIND
+- cover, radio edit, karaoke в version/title
+- чужой артист (сверка с каталогом Яндекса)
+- `OWN_REPLACED_TO_UGC`
 
-- Команда `list` — **первый столбец KIND** (не «ТРЕКОВ»!)
-- Пример: `1020  301  Новый плейлист` → скан: `scan 1020`
-- Или URL: `music.yandex.ru/playlists/1020` → KIND = `1020`
+**Не фейк:**
+- твои загрузки (user upload)
+- официальные версии (Arcane, soundtrack, remix)
 
-## Как отозвать токен после работы
+## Токен
 
-Токен нельзя «удалить» одной кнопкой, но можно отключить доступ:
+Получить: https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d
 
-1. Открой https://id.yandex.ru/security
-2. Раздел **«Приложения»** / **«Доступ к данным»**
-3. Найди приложение с доступом к Яндекс Музыке и отключи его
-
-Либо просто получи новый токен — старый перестанет работать после истечения срока.
-Также удали токен из истории терминала: `unset YANDEX_MUSIC_TOKEN`
-
-## Частые ошибки
-
-| Ошибка | Решение |
-|--------|---------|
-| `externally-managed-environment` | Не используй системный `pip`. Запусти `./setup.sh` |
-| `No module named yandex_music_og_songs` | Установка не прошла. Запусти `./setup.sh`, потом `.venv/bin/python ...` |
-| `Нужен токен` | `export YANDEX_MUSIC_TOKEN="..."` |
-
-## Разработка
-
-```bash
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest
-```
+Отозвать: https://id.yandex.ru/security → Приложения → отключить

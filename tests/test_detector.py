@@ -28,9 +28,23 @@ def test_keeps_remix_by_default():
     assert reasons == []
 
 
-def test_detects_user_upload():
+def test_keeps_soundtrack_version():
+    track = _track(version="from the series Arcane League of Legends")
+    status, reasons = detect_track(track, DetectionConfig())
+    assert status == TrackStatus.ORIGINAL
+
+
+def test_user_upload_not_fake_by_default():
     track = _track(is_user_upload=True)
     status, reasons = detect_track(track, DetectionConfig())
+    assert status == TrackStatus.ORIGINAL
+    assert reasons == []
+
+
+def test_user_upload_fake_when_enabled():
+    config = DetectionConfig(treat_ugc_as_fake=True)
+    track = _track(is_user_upload=True)
+    status, reasons = detect_track(track, config)
     assert status == TrackStatus.FAKE
     assert "user_upload" in reasons
 

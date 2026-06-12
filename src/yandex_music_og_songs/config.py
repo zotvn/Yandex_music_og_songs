@@ -27,7 +27,13 @@ class DetectionConfig(BaseModel):
         ]
     )
     keep_version_patterns: list[str] = Field(
-        default_factory=lambda: [r"remix", r"acoustic"]
+        default_factory=lambda: [
+            r"remix",
+            r"acoustic",
+            r"from the series",
+            r"soundtrack",
+            r"\bost\b",
+        ]
     )
     title_suffix_patterns: list[str] = Field(
         default_factory=lambda: [
@@ -36,9 +42,10 @@ class DetectionConfig(BaseModel):
             r"\[karaoke\]",
         ]
     )
-    treat_ugc_as_fake: bool = True
+    treat_ugc_as_fake: bool = False
     treat_replaced_to_ugc: bool = True
     duration_shorter_threshold: float = 0.15
+    artist_check_rate_limit: float = 0.25
 
 
 class ArtistWhitelistEntry(BaseModel):
@@ -47,7 +54,7 @@ class ArtistWhitelistEntry(BaseModel):
 
 
 class ArtistConfig(BaseModel):
-    mode: Literal["off", "optional", "strict", "warn_only"] = "optional"
+    mode: Literal["off", "optional", "strict", "warn_only"] = "strict"
     fuzzy_threshold: float = 0.85
     whitelist: list[ArtistWhitelistEntry] = Field(default_factory=list)
 
