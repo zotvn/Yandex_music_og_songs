@@ -179,8 +179,9 @@ def main(argv: Optional[list[str]] = None) -> None:
             "  import KIND file.txt\n"
             "\n"
             "choices.txt:\n"
-            "  28: 1      выбрать артиста\n"
-            "  15: skip    не менять трек\n"
+            "  28: 1         выбрать артиста\n"
+            "  15: skip       не менять трек\n"
+            "  15: replace    заменить версию (radio edit и т.п.)\n"
         )
         return
 

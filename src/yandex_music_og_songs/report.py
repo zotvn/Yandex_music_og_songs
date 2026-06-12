@@ -58,23 +58,52 @@ def print_scan_summary(result: PlaylistScanResult, file: TextIO = sys.stdout) ->
     )
 
 
+def _is_version_choice(item: ScannedTrack) -> bool:
+    return any(reason.startswith("pick_version") for reason in item.reasons)
+
+
 def format_choices_section(result: PlaylistScanResult) -> list[str]:
     choose_tracks = [item for item in result.tracks if item.status == TrackStatus.CHOOSE]
     if not choose_tracks:
         return []
 
-    lines = [
-        "",
-        "=" * 72,
-        "НУЖЕН ВЫБОР ИСПОЛНИТЕЛЯ",
-        "choices.txt:  28: 1   или   28: skip",
-        "=" * 72,
-    ]
-    for item in choose_tracks:
-        lines.append(f"{item.index + 1}. {format_track_label(item)}")
-        for idx, candidate in enumerate(item.artist_candidates, start=1):
-            sources = ", ".join(candidate.sources)
-            lines.append(f"     {idx}) {candidate.artist} [{sources}]")
+    artist_tracks = [item for item in choose_tracks if not _is_version_choice(item)]
+    version_tracks = [item for item in choose_tracks if _is_version_choice(item)]
+
+    lines: list[str] = [""]
+
+    if artist_tracks:
+        lines.extend(
+            [
+                "=" * 72,
+                "НУЖЕН ВЫБОР ИСПОЛНИТЕЛЯ",
+                "choices.txt:  28: 1   или   28: skip",
+                "=" * 72,
+            ]
+        )
+        for item in artist_tracks:
+            lines.append(f"{item.index + 1}. {format_track_label(item)}")
+            for idx, candidate in enumerate(item.artist_candidates, start=1):
+                sources = ", ".join(candidate.sources)
+                lines.append(f"     {idx}) {candidate.artist} [{sources}]")
+
+    if version_tracks:
+        lines.extend(
+            [
+                "=" * 72,
+                "НУЖЕН ВЫБОР ВЕРСИИ (в скобках)",
+                "choices.txt:  15: skip (оставить)   или   15: replace (заменить)",
+                "=" * 72,
+            ]
+        )
+        for item in version_tracks:
+            lines.append(f"{item.index + 1}. {format_track_label(item)}")
+            suffix = next(
+                (reason.split(":", 1)[1] for reason in item.reasons if reason.startswith("pick_version")),
+                "версия",
+            )
+            lines.append(f"     ?) {suffix}")
+
     lines.append("")
     return lines
 

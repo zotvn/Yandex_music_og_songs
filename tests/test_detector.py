@@ -21,6 +21,31 @@ def test_detects_radio_edit_version():
     assert any("version" in reason for reason in reasons)
 
 
+def test_detects_radio_edit_in_brackets_as_choose():
+    track = _track(title="Song (Radio Edit)")
+    status, reasons = detect_track(track, DetectionConfig())
+    assert status == TrackStatus.CHOOSE
+    assert any(reason.startswith("pick_version") for reason in reasons)
+
+
+def test_detects_slowed_in_brackets_as_choose():
+    track = _track(title="Song [Slowed + Reverb]")
+    status, reasons = detect_track(track, DetectionConfig())
+    assert status == TrackStatus.CHOOSE
+
+
+def test_detects_trailing_radio_edit_as_choose():
+    track = _track(title="Song - Radio Edit")
+    status, reasons = detect_track(track, DetectionConfig())
+    assert status == TrackStatus.CHOOSE
+
+
+def test_detects_radio_edit_remix_combo():
+    track = _track(version="Radio Edit Remix")
+    status, reasons = detect_track(track, DetectionConfig())
+    assert status == TrackStatus.FAKE
+
+
 def test_keeps_remix_by_default():
     track = _track(version="Extended Remix")
     status, reasons = detect_track(track, DetectionConfig())
@@ -49,8 +74,8 @@ def test_user_upload_fake_when_enabled():
     assert "user_upload" in reasons
 
 
-def test_detects_title_suffix():
+def test_detects_title_cover_as_fake():
     track = _track(title="Song (Cover)")
     status, reasons = detect_track(track, DetectionConfig())
     assert status == TrackStatus.FAKE
-    assert any("title_suffix" in reason for reason in reasons)
+    assert any("title_fake" in reason for reason in reasons)

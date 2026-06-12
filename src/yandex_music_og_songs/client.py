@@ -7,6 +7,7 @@ from yandex_music import Client, Playlist, Track
 from yandex_music.track_short import TrackShort
 
 from yandex_music_og_songs.config import AppConfig
+from yandex_music_og_songs.network import retry_network
 
 _BATCH_SIZE = 150
 
@@ -57,7 +58,14 @@ class YandexMusicClient:
             chunk_ids = [short.track_id for short in chunk_shorts if short is not None]
             end = min(offset + len(chunk_shorts), total)
             print(f"  {offset + 1}-{end} / {total}", file=sys.stderr, flush=True)
-            batch = self._client.tracks(chunk_ids) if chunk_ids else []
+            batch = (
+                retry_network(
+                    lambda: self._client.tracks(chunk_ids),
+                    label=f"треки {offset + 1}-{end}",
+                )
+                if chunk_ids
+                else []
+            )
             batch = batch or []
             batch_iter = iter(batch)
             for short in chunk_shorts:

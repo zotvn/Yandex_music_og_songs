@@ -21,15 +21,17 @@ class PerformanceConfig(BaseModel):
 class DetectionConfig(BaseModel):
     fake_version_patterns: list[str] = Field(
         default_factory=lambda: [
-            r"radio\s*edit",
+            r"radio\s*[-_]?\s*edit",
             r"cover",
             r"karaoke",
             r"tribute",
             r"instrumental",
-            r"sped\s*up",
-            r"slowed",
+            r"sped\s*[-_]?\s*up",
+            r"speed\s*[-_]?\s*up",
+            r"slowed(?:\s*(?:&|and)\s*reverb)?",
             r"nightcore",
             r"\b8d\b",
+            r"reverb(?:\s*only)?",
         ]
     )
     keep_version_patterns: list[str] = Field(
@@ -41,15 +43,47 @@ class DetectionConfig(BaseModel):
             r"\bost\b",
         ]
     )
-    title_suffix_patterns: list[str] = Field(
+    title_paren_fake_patterns: list[str] = Field(
         default_factory=lambda: [
-            r"\(cover\)",
-            r"\(radio edit\)",
-            r"\[karaoke\]",
+            r"cover",
+            r"karaoke",
+            r"tribute",
+        ]
+    )
+    title_fake_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"[\(\[]\s*cover\s*[\)\]]",
+            r"[\(\[]\s*karaoke\s*[\)\]]",
+            r"[\(\[]\s*tribute\s*[\)\]]",
+            r"\bcover\s+version\b",
+        ]
+    )
+    title_ask_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"radio\s*[-_]?\s*edit",
+            r"sped\s*[-_]?\s*up",
+            r"speed\s*[-_]?\s*up",
+            r"slowed",
+            r"nightcore",
+            r"\b8d\b",
+            r"reverb",
+            r"pitch\s*shift",
         ]
     )
     treat_ugc_as_fake: bool = False
     treat_replaced_to_ugc: bool = True
+
+    @property
+    def title_suffix_patterns(self) -> list[str]:
+        """Patterns stripped from titles before artist lookup."""
+        return list(self.title_fake_patterns) + [
+            r"[\(\[]\s*radio\s*[-_]?\s*edit\s*[\)\]]",
+            r"[\(\[]\s*sped\s*[-_]?\s*up\s*[\)\]]",
+            r"[\(\[]\s*speed\s*[-_]?\s*up\s*[\)\]]",
+            r"[\(\[]\s*slowed[^)\]]*[\)\]]",
+            r"[\(\[]\s*nightcore\s*[\)\]]",
+            r"[\(\[]\s*8d\s*[\)\]]",
+        ]
 
 
 class AppConfig(BaseModel):

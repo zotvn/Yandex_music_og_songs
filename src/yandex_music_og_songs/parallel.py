@@ -19,6 +19,7 @@ from yandex_music_og_songs.artist_resolver import (
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import DetectionConfig, PerformanceConfig
 from yandex_music_og_songs.models import ArtistCandidate, TrackRef, TrackStatus
+from yandex_music_og_songs.network import retry_network
 from yandex_music_og_songs.normalizer import base_title, normalize_text
 
 _thread_local = threading.local()
@@ -111,7 +112,11 @@ def resolve_from_cache(
 def _fetch_chunk(token: str, chunk_shorts: list[TrackShort]) -> list[Optional[Track]]:
     client = _thread_client(token)
     chunk_ids = [short.track_id for short in chunk_shorts if short is not None]
-    batch = client.raw.tracks(chunk_ids) if chunk_ids else []
+    batch = (
+        retry_network(lambda: client.raw.tracks(chunk_ids), label="треки")
+        if chunk_ids
+        else []
+    )
     batch = batch or []
     batch_iter = iter(batch)
     chunk_result: list[Optional[Track]] = []
