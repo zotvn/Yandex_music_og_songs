@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import re
-import time
 import urllib.parse
 import urllib.request
-from collections import defaultdict
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Optional
@@ -15,7 +15,7 @@ from yandex_music_og_songs.config import DetectionConfig
 from yandex_music_og_songs.models import ArtistCandidate, TrackRef, TrackStatus
 from yandex_music_og_songs.normalizer import base_title, normalize_text
 
-_USER_AGENT = "YandexMusicOGSongs/0.2 (https://github.com/zotvn/Yandex_music_og_songs)"
+_USER_AGENT = "YandexMusicOGSongs/0.3 (https://github.com/zotvn/Yandex_music_og_songs)"
 _AMBIGUOUS_GAP = 0.15
 _MATCH_THRESHOLD = 0.82
 
@@ -45,7 +45,7 @@ def _search_yandex(client: YandexMusicClient, title: str, detection: DetectionCo
         return []
 
     artists: list[str] = []
-    for track in search.tracks.results[:15]:
+    for track in search.tracks.results[:12]:
         if not track.artists or not track.title:
             continue
         if track.version and _is_fake_version(track.version, detection):
@@ -60,10 +60,10 @@ def _search_yandex(client: YandexMusicClient, title: str, detection: DetectionCo
 
 def _search_musicbrainz(title: str) -> list[str]:
     query = urllib.parse.quote(f'recording:"{title}"')
-    url = f"https://musicbrainz.org/ws/2/recording?query={query}&fmt=json&limit=15"
+    url = f"https://musicbrainz.org/ws/2/recording?query={query}&fmt=json&limit=10"
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(request, timeout=12) as response:
+        with urllib.request.urlopen(request, timeout=8) as response:
             data = json.loads(response.read().decode("utf-8"))
     except Exception:
         return []
@@ -111,23 +111,37 @@ def _build_candidates(yandex: list[str], musicbrainz: list[str]) -> list[ArtistC
     ]
 
 
+def _yandex_is_confident(yandex: list[str]) -> bool:
+    if len(yandex) < 2:
+        return len(yandex) == 1
+    counts = Counter(normalize_text(name) for name in yandex)
+    top = counts.most_common(1)[0][1]
+    return top >= 2 and len(counts) <= 2
+
+
 def lookup_artists(
     client: YandexMusicClient,
     title: str,
     detection: DetectionConfig,
     cache: dict[str, list[ArtistCandidate]],
-    rate_limit: float,
 ) -> list[ArtistCandidate]:
     key = normalize_text(base_title(title, detection.title_suffix_patterns))
     if key in cache:
         return cache[key]
 
-    if rate_limit > 0:
-        time.sleep(rate_limit)
+    clean_title = base_title(title, detection.title_suffix_patterns)
+    yandex = _search_yandex(client, clean_title, detection)
 
-    yandex = _search_yandex(client, title, detection)
-    time.sleep(1.0)
-    musicbrainz = _search_musicbrainz(base_title(title, detection.title_suffix_patterns))
+    if _yandex_is_confident(yandex):
+        candidates = _build_candidates(yandex, [])
+        cache[key] = candidates
+        return candidates
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        yandex_future = pool.submit(_search_yandex, client, clean_title, detection)
+        mb_future = pool.submit(_search_musicbrainz, clean_title)
+        yandex = yandex_future.result()
+        musicbrainz = mb_future.result()
 
     candidates = _build_candidates(yandex, musicbrainz)
     cache[key] = candidates
@@ -139,12 +153,11 @@ def resolve_track_artist(
     track: TrackRef,
     detection: DetectionConfig,
     cache: dict[str, list[ArtistCandidate]],
-    rate_limit: float,
 ) -> ArtistResolution:
     if track.is_user_upload:
         return ArtistResolution(TrackStatus.ORIGINAL, [], [], track.artist)
 
-    candidates = lookup_artists(client, track.title, detection, cache, rate_limit)
+    candidates = lookup_artists(client, track.title, detection, cache)
     if not candidates:
         return ArtistResolution(TrackStatus.ORIGINAL, ["artist_unknown"], [], None)
 

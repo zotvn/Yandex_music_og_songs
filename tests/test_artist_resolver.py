@@ -24,7 +24,7 @@ def test_resolve_wrong_artist_when_single_candidate():
         "yandex_music_og_songs.artist_resolver.lookup_artists",
         return_value=[MagicMock(artist="sombr", sources=("yandex",), score=2.0)],
     ):
-        resolution = resolve_track_artist(client, track, DetectionConfig(), {}, 0)
+        resolution = resolve_track_artist(client, track, DetectionConfig(), {})
     assert resolution.status == TrackStatus.FAKE
     assert "wrong_artist:sombr" in resolution.reasons
 
@@ -39,5 +39,5 @@ def test_resolve_ambiguous_when_close_scores():
             MagicMock(artist="Artist B", sources=("musicbrainz",), score=0.95),
         ],
     ):
-        resolution = resolve_track_artist(client, track, DetectionConfig(), {}, 0)
+        resolution = resolve_track_artist(client, track, DetectionConfig(), {})
     assert resolution.status == TrackStatus.CHOOSE

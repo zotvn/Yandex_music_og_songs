@@ -11,23 +11,15 @@ from yandex_music_og_songs.choices_io import apply_choices, parse_choices, write
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import AppConfig
 from yandex_music_og_songs.playlist import load_playlist_tracks, scan_playlist, scan_playlists
-from yandex_music_og_songs.report import format_scan_text
-from yandex_music_og_songs.review_io import (
-    apply_review_marks,
-    parse_review_file,
-    write_plain_export,
-    write_review_export,
-)
+from yandex_music_og_songs.report import format_scan_text, print_choices_section, print_scan_summary
+from yandex_music_og_songs.review_io import apply_review_marks, parse_review_file, write_plain_export, write_review_export
+from yandex_music_og_songs.scan_cache import load_scan_result, save_scan_result, scan_cache_path
 
 
 def _get_token(token: Optional[str]) -> str:
     value = (token or os.environ.get("YANDEX_MUSIC_TOKEN", "")).strip()
     if not value:
-        print(
-            "Нужен токен Яндекс Музыки.\n"
-            "export YANDEX_MUSIC_TOKEN=\"ваш_токен\"",
-            file=sys.stderr,
-        )
+        print('Нужен токен: export YANDEX_MUSIC_TOKEN="..."', file=sys.stderr)
         sys.exit(1)
     return value
 
@@ -36,7 +28,6 @@ def _parse_args(args: list[str]) -> tuple[Optional[str], Optional[int], Optional
     token: Optional[str] = None
     kind: Optional[int] = None
     path: Optional[Path] = None
-    rest: list[str] = []
 
     i = 0
     while i < len(args):
@@ -50,54 +41,49 @@ def _parse_args(args: list[str]) -> tuple[Optional[str], Optional[int], Optional
             path = Path(args[i])
             i += 1
         else:
-            rest.append(args[i])
             i += 1
 
-    return token, kind, path, rest
+    return token, kind, path, []
 
 
-def _scan_one(client: YandexMusicClient, kind: int, *, artist_check: bool):
+def _get_playlist(client: YandexMusicClient, kind: int):
     try:
-        playlist = client.get_playlist(kind)
+        return client.get_playlist(kind)
     except NotFoundError:
         print(f"Плейлист kind={kind} не найден.", file=sys.stderr)
-        print("KIND — первый столбец в list.", file=sys.stderr)
         sys.exit(1)
-    return scan_playlist(client, playlist, AppConfig(), artist_check=artist_check)
 
 
 def cmd_list(token: Optional[str]) -> None:
     client = YandexMusicClient(_get_token(token))
     playlists = client.list_playlists()
-    if not playlists:
-        print("Плейлистов не найдено.")
-        return
     print(f"{'KIND':<8} {'ТРЕКОВ':<8} НАЗВАНИЕ")
     print("-" * 50)
     for p in playlists:
         print(f"{p.kind:<8} {p.track_count or 0:<8} {p.title}")
-    print()
-    print("export 1020 songs.txt")
-    print("scan 1020")
 
 
 def cmd_scan(token: Optional[str], kind: Optional[int]) -> None:
     client = YandexMusicClient(_get_token(token))
+    config = AppConfig()
+
     if kind is None:
-        results = scan_playlists(client, AppConfig(), artist_check=True)
+        results = scan_playlists(client, config, artist_check=True, stream=True)
     else:
-        results = [_scan_one(client, kind, artist_check=True)]
+        playlist = _get_playlist(client, kind)
+        results = [scan_playlist(client, playlist, config, artist_check=True, stream=True)]
 
     if not results or results[0].track_count == 0:
-        print("Плейлист пуст или не найден.", file=sys.stderr)
+        print("Плейлист пуст.", file=sys.stderr)
         sys.exit(1)
 
-    result = results[0] if kind is not None else results[0]
-    if kind is not None and result.choose_count:
-        write_choices_template(result, Path("choices.txt"))
-        print("Создан choices.txt — выбери исполнителей, потом: choose KIND choices.txt", file=sys.stderr)
-
-    print(format_scan_text(results), end="")
+    result = results[0]
+    if kind is not None:
+        cache = scan_cache_path(kind)
+        save_scan_result(result, cache)
+        if result.choose_count:
+            write_choices_template(result, Path("choices.txt"))
+            print("Создан choices.txt", file=sys.stderr)
 
 
 def cmd_export(token: Optional[str], kind: Optional[int], out_path: Optional[Path]) -> None:
@@ -106,7 +92,7 @@ def cmd_export(token: Optional[str], kind: Optional[int], out_path: Optional[Pat
         sys.exit(1)
 
     client = YandexMusicClient(_get_token(token))
-    playlist = client.get_playlist(kind)
+    playlist = _get_playlist(client, kind)
     result = load_playlist_tracks(client, playlist)
     write_plain_export(result, out_path)
     print(f"Готово: {result.track_count} треков → {out_path}")
@@ -118,11 +104,11 @@ def cmd_review(token: Optional[str], kind: Optional[int], out_path: Optional[Pat
         sys.exit(1)
 
     client = YandexMusicClient(_get_token(token))
-    result = _scan_one(client, kind, artist_check=True)
+    playlist = _get_playlist(client, kind)
+    result = scan_playlist(client, playlist, AppConfig(), artist_check=True, stream=True)
     write_review_export(result, out_path)
-    if result.choose_count:
-        write_choices_template(result, out_path.with_name("choices.txt"))
-    print(f"Готово → {out_path}", file=sys.stderr)
+    save_scan_result(result, scan_cache_path(kind))
+    print(f"Сохранено → {out_path}", file=sys.stderr)
 
 
 def cmd_choose(token: Optional[str], kind: Optional[int], in_path: Optional[Path]) -> None:
@@ -133,25 +119,36 @@ def cmd_choose(token: Optional[str], kind: Optional[int], in_path: Optional[Path
         print(f"Файл не найден: {in_path}", file=sys.stderr)
         sys.exit(1)
 
-    client = YandexMusicClient(_get_token(token))
-    playlist = client.get_playlist(kind)
-    base = scan_playlist(client, playlist, AppConfig(), artist_check=True)
+    cache = scan_cache_path(kind)
+    if cache.exists():
+        base = load_scan_result(cache)
+    else:
+        client = YandexMusicClient(_get_token(token))
+        playlist = _get_playlist(client, kind)
+        base = scan_playlist(client, playlist, AppConfig(), artist_check=True, stream=False)
+
     result = apply_choices(base, parse_choices(in_path))
-    print(format_scan_text([result]), end="")
+    save_scan_result(result, cache)
+    print_scan_summary(result)
+    print_choices_section(result)
+    print(f"\nК замене: {result.fake_count} | пропуск: {result.skip_count}", file=sys.stderr)
 
 
 def cmd_import(token: Optional[str], kind: Optional[int], in_path: Optional[Path]) -> None:
     if kind is None or in_path is None:
         print("Использование: import KIND файл.txt", file=sys.stderr)
         sys.exit(1)
-    if not in_path.exists():
-        print(f"Файл не найден: {in_path}", file=sys.stderr)
-        sys.exit(1)
 
-    client = YandexMusicClient(_get_token(token))
-    playlist = client.get_playlist(kind)
-    base = load_playlist_tracks(client, playlist)
+    cache = scan_cache_path(kind)
+    if cache.exists():
+        base = load_scan_result(cache)
+    else:
+        client = YandexMusicClient(_get_token(token))
+        playlist = _get_playlist(client, kind)
+        base = load_playlist_tracks(client, playlist)
+
     result = apply_review_marks(base, parse_review_file(in_path))
+    save_scan_result(result, cache)
     print(format_scan_text([result]), end="")
 
 
@@ -160,20 +157,22 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     if not args or args[0] in ("-h", "--help", "help"):
         print(
-            "Команды:\n"
             "  list\n"
-            "  export KIND file.txt       быстрый список без проверки\n"
-            "  scan KIND                  проверка + интернет-поиск артиста\n"
-            "  choose KIND choices.txt    выбрать исполнителя\n"
-            "  review KIND file.txt\n"
+            "  export KIND file.txt\n"
+            "  scan KIND              результат сразу по каждому треку\n"
+            "  choose KIND choices.txt\n"
             "  import KIND file.txt\n"
+            "\n"
+            "choices.txt:\n"
+            "  28: 1      выбрать артиста\n"
+            "  15: skip    не менять трек\n"
         )
         return
 
     command = args[0]
     token, kind, path, _ = _parse_args(args[1:])
 
-    commands = {
+    handlers = {
         "list": lambda: cmd_list(token),
         "scan": lambda: cmd_scan(token, kind),
         "export": lambda: cmd_export(token, kind, path),
@@ -181,8 +180,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         "choose": lambda: cmd_choose(token, kind, path),
         "import": lambda: cmd_import(token, kind, path),
     }
-
-    handler = commands.get(command)
+    handler = handlers.get(command)
     if handler is None:
         print(f"Неизвестная команда: {command}", file=sys.stderr)
         sys.exit(1)

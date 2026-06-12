@@ -44,7 +44,6 @@ class DetectionConfig(BaseModel):
     )
     treat_ugc_as_fake: bool = False
     treat_replaced_to_ugc: bool = True
-    artist_check_rate_limit: float = 0.15
 
 
 class AppConfig(BaseModel):

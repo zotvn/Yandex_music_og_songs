@@ -9,6 +9,7 @@ class TrackStatus(str, Enum):
     ORIGINAL = "original"
     FAKE = "fake"
     CHOOSE = "choose"
+    SKIP = "skip"
 
 
 @dataclass(frozen=True)
@@ -62,3 +63,7 @@ class PlaylistScanResult:
     @property
     def choose_count(self) -> int:
         return sum(1 for t in self.tracks if t.status == TrackStatus.CHOOSE)
+
+    @property
+    def skip_count(self) -> int:
+        return sum(1 for t in self.tracks if t.status == TrackStatus.SKIP)

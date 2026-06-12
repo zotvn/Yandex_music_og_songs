@@ -44,8 +44,8 @@ def test_apply_review_marks():
     updated = apply_review_marks(
         result,
         [
-            ReviewEntry(number=1, replace=False, label="A - Song"),
-            ReviewEntry(number=28, replace=True, label="TommyMuzzic - back to friends"),
+            ReviewEntry(number=1, replace=False, skip=False, label="A - Song"),
+            ReviewEntry(number=28, replace=True, skip=False, label="TommyMuzzic - back to friends"),
         ],
     )
     assert updated.tracks[0].status == TrackStatus.ORIGINAL

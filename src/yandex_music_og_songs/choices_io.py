@@ -10,7 +10,8 @@ from yandex_music_og_songs.models import ArtistCandidate, PlaylistScanResult, Sc
 from yandex_music_og_songs.normalizer import normalize_text
 
 
-_CHOICE_RE = re.compile(r"^\s*(\d+)\s*:\s*(\S+)\s*$")
+_CHOICE_RE = re.compile(r"^\s*(\d+)\s*:\s*(\S+)\s*$", re.IGNORECASE)
+_SKIP_VALUES = {"skip", "keep", "s", "0"}
 
 
 @dataclass(frozen=True)
@@ -21,9 +22,11 @@ class UserChoice:
 
 def write_choices_template(result: PlaylistScanResult, path: Path) -> None:
     lines = [
-        "# Выбери исполнителя для треков ниже.",
-        "# Формат: номер: номер_варианта   или   номер: Имя Артиста",
-        "# Пример: 28: 1",
+        "# Выбор исполнителя:",
+        "#   28: 1          — вариант из списка",
+        "#   28: sombr       — имя артиста",
+        "# Исключить из замены (оставить как есть):",
+        "#   15: skip",
         "",
     ]
 
@@ -76,35 +79,50 @@ def apply_choices(result: PlaylistScanResult, choices: list[UserChoice]) -> Play
     updated: list[ScannedTrack] = []
 
     for item in result.tracks:
-        choice = by_number.get(item.index + 1)
-        if item.status != TrackStatus.CHOOSE or choice is None:
-            updated.append(item)
-            continue
+        number = item.index + 1
+        choice = by_number.get(number)
 
-        picked = _pick_candidate(item.artist_candidates, choice.value)
-        if not picked:
-            updated.append(item)
-            continue
-
-        from yandex_music_og_songs.artist_resolver import _similarity
-
-        if _similarity(item.track.artist, picked) >= 0.82:
-            status = TrackStatus.ORIGINAL
-            reasons: list[str] = []
-        else:
-            status = TrackStatus.FAKE
-            reasons = [f"wrong_artist:{picked}", "picked_by_user"]
-
-        updated.append(
-            ScannedTrack(
-                index=item.index,
-                track=item.track,
-                status=status,
-                reasons=reasons,
-                artist_candidates=item.artist_candidates,
-                expected_artist=picked,
+        if choice and choice.value.lower() in _SKIP_VALUES:
+            updated.append(
+                ScannedTrack(
+                    index=item.index,
+                    track=item.track,
+                    status=TrackStatus.SKIP,
+                    reasons=["skipped_by_user"],
+                    artist_candidates=item.artist_candidates,
+                    expected_artist=item.expected_artist,
+                )
             )
-        )
+            continue
+
+        if item.status == TrackStatus.CHOOSE and choice is not None:
+            picked = _pick_candidate(item.artist_candidates, choice.value)
+            if not picked:
+                updated.append(item)
+                continue
+
+            from yandex_music_og_songs.artist_resolver import _similarity
+
+            if _similarity(item.track.artist, picked) >= 0.82:
+                status = TrackStatus.ORIGINAL
+                reasons: list[str] = []
+            else:
+                status = TrackStatus.FAKE
+                reasons = [f"wrong_artist:{picked}", "picked_by_user"]
+
+            updated.append(
+                ScannedTrack(
+                    index=item.index,
+                    track=item.track,
+                    status=status,
+                    reasons=reasons,
+                    artist_candidates=item.artist_candidates,
+                    expected_artist=picked,
+                )
+            )
+            continue
+
+        updated.append(item)
 
     return PlaylistScanResult(
         kind=result.kind,

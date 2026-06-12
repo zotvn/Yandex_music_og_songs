@@ -8,7 +8,7 @@ from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, Track
 from yandex_music_og_songs.report import format_duration, format_track_label
 
 _LINE_RE = re.compile(
-    r"^\s*(\d+)\.\s*(?:\[(REPLACE|KEEP)\]\s*)?(.+?)(?:\s+\[(\d+:\d+|-)\])?\s*$",
+    r"^\s*(\d+)\.\s*(?:\[(REPLACE|KEEP|SKIP|CHOOSE)\]\s*)?(.+?)(?:\s+\[(\d+:\d+|-)\])?\s*$",
     re.IGNORECASE,
 )
 
@@ -17,6 +17,7 @@ _LINE_RE = re.compile(
 class ReviewEntry:
     number: int
     replace: bool
+    skip: bool
     label: str
 
 
@@ -32,6 +33,8 @@ def format_review_line(item: ScannedTrack) -> str:
         tag = "[REPLACE] "
     elif item.status == TrackStatus.CHOOSE:
         tag = "[CHOOSE] "
+    elif item.status == TrackStatus.SKIP:
+        tag = "[SKIP] "
     else:
         tag = ""
     return (
@@ -47,8 +50,7 @@ def write_plain_export(result: PlaylistScanResult, path: Path) -> None:
 
 def write_review_export(result: PlaylistScanResult, path: Path) -> None:
     header = (
-        "# Отметь [REPLACE] у треков для замены. Остальные не трогать.\n"
-        "# Формат: 28. [REPLACE] Artist - Title [3:19]\n"
+        "# [REPLACE] — заменить | [SKIP] — не трогать | убери тег чтобы оставить\n"
     )
     lines = [format_review_line(item) for item in result.tracks]
     path.write_text(header + "\n".join(lines) + "\n", encoding="utf-8")
@@ -63,10 +65,15 @@ def parse_review_file(path: Path) -> list[ReviewEntry]:
         match = _LINE_RE.match(line)
         if not match:
             continue
-        number = int(match.group(1))
-        replace = (match.group(2) or "").upper() == "REPLACE"
-        label = match.group(3).strip()
-        entries.append(ReviewEntry(number=number, replace=replace, label=label))
+        tag = (match.group(2) or "").upper()
+        entries.append(
+            ReviewEntry(
+                number=int(match.group(1)),
+                replace=tag == "REPLACE",
+                skip=tag == "SKIP",
+                label=match.group(3).strip(),
+            )
+        )
     return entries
 
 
@@ -81,6 +88,19 @@ def apply_review_marks(result: PlaylistScanResult, entries: list[ReviewEntry]) -
             updated.append(item)
             continue
 
+        if entry.skip:
+            updated.append(
+                ScannedTrack(
+                    index=item.index,
+                    track=item.track,
+                    status=TrackStatus.SKIP,
+                    reasons=["skipped_by_user"],
+                    artist_candidates=item.artist_candidates,
+                    expected_artist=item.expected_artist,
+                )
+            )
+            continue
+
         if entry.replace:
             reasons = list(item.reasons)
             if "manual_replace" not in reasons:
@@ -91,17 +111,22 @@ def apply_review_marks(result: PlaylistScanResult, entries: list[ReviewEntry]) -
                     track=item.track,
                     status=TrackStatus.FAKE,
                     reasons=reasons,
+                    artist_candidates=item.artist_candidates,
+                    expected_artist=item.expected_artist,
                 )
             )
-        else:
-            updated.append(
-                ScannedTrack(
-                    index=item.index,
-                    track=item.track,
-                    status=TrackStatus.ORIGINAL,
-                    reasons=[],
-                )
+            continue
+
+        updated.append(
+            ScannedTrack(
+                index=item.index,
+                track=item.track,
+                status=TrackStatus.ORIGINAL,
+                reasons=[],
+                artist_candidates=item.artist_candidates,
+                expected_artist=item.expected_artist,
             )
+        )
 
     return PlaylistScanResult(
         kind=result.kind,

@@ -12,45 +12,38 @@ export YANDEX_MUSIC_TOKEN="ваш_токен"
 ## Команды
 
 ```bash
-# список плейлистов
-.venv/bin/python -m yandex_music_og_songs list
-
-# быстрый экспорт списка (без проверки артиста)
+# быстрый список
 .venv/bin/python -m yandex_music_og_songs export 1020 songs.txt
 
-# полный скан: Яндекс + MusicBrainz
+# скан — результат сразу по каждому треку
 .venv/bin/python -m yandex_music_og_songs scan 1020
 
-# если в конце [????] — выбери исполнителя
+# выбор / исключение (без повторного скана)
 .venv/bin/python -m yandex_music_og_songs choose 1020 choices.txt
 ```
 
-## Выбор исполнителя
+## Статусы (появляются сразу)
 
-После `scan` создаётся `choices.txt`:
+| Статус | Значение |
+|--------|----------|
+| OK | Норм |
+| FAKE | Фейк, будет заменён |
+| ???? | Несколько исполнителей — выбери |
+| SKIP | Не трогать |
+
+## choices.txt
 
 ```
-28. TommyMuzzic - back to friends
-  1) sombr [yandex, musicbrainz]
-  2) TommyMuzzic [yandex]
-```
-
-Запиши выбор:
-
-```
+# выбрать исполнителя
 28: 1
+
+# НЕ менять трек (убрать из замены)
+15: skip
 ```
 
-Потом:
+## review.txt
 
-```bash
-.venv/bin/python -m yandex_music_og_songs choose 1020 choices.txt
 ```
-
-## Статусы
-
-- `[OK]` — исполнитель совпал с интернетом
-- `[FAKE]` — найден другой исполнитель
-- `[????]` — несколько вариантов, нужен твой выбор
-
-Твои загрузки не помечаются как фейк.
+15. [SKIP] Artist - Song [3:00]
+28. [REPLACE] TommyMuzzic - back to friends [3:19]
+```
