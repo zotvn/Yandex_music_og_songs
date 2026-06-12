@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from yandex_music import Client
-from yandex_music import Playlist
+from yandex_music import Client, Playlist, Track
+from yandex_music.track_short import TrackShort
 
 from yandex_music_og_songs.config import AppConfig
+
+_BATCH_SIZE = 100
 
 
 class YandexMusicClient:
@@ -30,8 +32,30 @@ class YandexMusicClient:
             raise ValueError(f"Playlist kind={kind} not found")
         return playlist
 
-    def fetch_playlist_tracks(self, playlist: Playlist):
-        tracks = playlist.fetch_tracks()
-        if tracks is None:
+    def playlist_track_shorts(self, playlist: Playlist) -> list[TrackShort]:
+        shorts = playlist.tracks
+        if shorts is None:
+            shorts = playlist.fetch_tracks()
+        return shorts or []
+
+    def fetch_full_tracks(self, shorts: list[TrackShort]) -> list[Optional[Track]]:
+        if not shorts:
             return []
-        return tracks
+
+        track_ids = [short.track_id for short in shorts if short is not None]
+        fetched: list[Track] = []
+
+        for offset in range(0, len(track_ids), _BATCH_SIZE):
+            chunk = track_ids[offset : offset + _BATCH_SIZE]
+            batch = self._client.tracks(chunk)
+            if batch:
+                fetched.extend(batch)
+
+        by_id = {str(track.id): track for track in fetched}
+        result: list[Optional[Track]] = []
+        for short in shorts:
+            if short is None:
+                result.append(None)
+                continue
+            result.append(by_id.get(str(short.id)))
+        return result

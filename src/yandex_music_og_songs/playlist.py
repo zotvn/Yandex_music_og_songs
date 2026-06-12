@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Iterable, Optional
 
 from yandex_music import Playlist, Track
@@ -49,17 +50,19 @@ def scan_playlist(
     playlist: Playlist,
     config: AppConfig,
 ) -> PlaylistScanResult:
-    tracks = client.fetch_playlist_tracks(playlist)
+    shorts = client.playlist_track_shorts(playlist)
+    if shorts:
+        print(f"Загрузка {len(shorts)} треков...", file=sys.stderr)
+    full_tracks = client.fetch_full_tracks(shorts)
     scanned: list[ScannedTrack] = []
 
-    for index, item in enumerate(tracks):
-        track: Optional[Track] = item
+    for index, track in enumerate(full_tracks):
         if track is None:
             continue
 
         album_id = None
-        if playlist.tracks and index < len(playlist.tracks):
-            album_id = playlist.tracks[index].album_id
+        if index < len(shorts) and shorts[index] is not None:
+            album_id = shorts[index].album_id
 
         track_ref = _track_ref_from_yandex(track, album_id)
         status, reasons = detect_track(track_ref, config.detection)

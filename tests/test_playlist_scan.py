@@ -5,38 +5,32 @@ from yandex_music_og_songs.models import TrackStatus
 from yandex_music_og_songs.playlist import scan_playlist
 
 
+def _make_track(**kwargs):
+    track = MagicMock()
+    track.id = kwargs.get("id", 1)
+    track.title = kwargs.get("title", "Song")
+    track.version = kwargs.get("version")
+    track.artists = [MagicMock(name=kwargs.get("artist", "Artist"))]
+    track.albums = [MagicMock(id=kwargs.get("album_id", 100))]
+    track.duration_ms = kwargs.get("duration_ms", 200000)
+    track.track_source = kwargs.get("track_source")
+    track.filename = kwargs.get("filename")
+    track.user_info = kwargs.get("user_info")
+    return track
+
+
 def test_scan_playlist_marks_fake_and_original():
     playlist = MagicMock()
     playlist.kind = 42
     playlist.title = "Test Playlist"
-    playlist.tracks = [MagicMock(album_id=100)]
+    playlist.tracks = [MagicMock(album_id=100), MagicMock(album_id=101)]
 
-    fake_track = MagicMock()
-    fake_track.id = 1
-    fake_track.title = "Song (Cover)"
-    fake_track.version = None
-    fake_track.artists = [MagicMock(name="Artist A")]
-    fake_track.albums = [MagicMock(id=100)]
-    fake_track.duration_ms = 200000
-    fake_track.track_source = None
-    fake_track.filename = None
-    fake_track.user_info = None
-
-    original_track = MagicMock()
-    original_track.id = 2
-    original_track.title = "Real Song"
-    original_track.version = None
-    original_track.artists = [MagicMock(name="Artist B")]
-    original_track.albums = [MagicMock(id=101)]
-    original_track.duration_ms = 210000
-    original_track.track_source = "OWN"
-    original_track.filename = None
-    original_track.user_info = None
-
-    playlist.tracks.append(MagicMock(album_id=101))
+    fake_track = _make_track(id=1, title="Song (Cover)")
+    original_track = _make_track(id=2, title="Real Song", artist="Artist B", album_id=101, track_source="OWN")
 
     client = MagicMock()
-    client.fetch_playlist_tracks.return_value = [fake_track, original_track]
+    client.playlist_track_shorts.return_value = playlist.tracks
+    client.fetch_full_tracks.return_value = [fake_track, original_track]
 
     result = scan_playlist(client, playlist, AppConfig())
 
