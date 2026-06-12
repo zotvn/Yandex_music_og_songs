@@ -4,7 +4,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
-from collections import Counter, defaultdict
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -111,14 +111,6 @@ def _build_candidates(yandex: list[str], musicbrainz: list[str]) -> list[ArtistC
     ]
 
 
-def _yandex_is_confident(yandex: list[str]) -> bool:
-    if len(yandex) < 2:
-        return len(yandex) == 1
-    counts = Counter(normalize_text(name) for name in yandex)
-    top = counts.most_common(1)[0][1]
-    return top >= 2 and len(counts) <= 2
-
-
 def lookup_artists(
     client: YandexMusicClient,
     title: str,
@@ -130,13 +122,6 @@ def lookup_artists(
         return cache[key]
 
     clean_title = base_title(title, detection.title_suffix_patterns)
-    yandex = _search_yandex(client, clean_title, detection)
-
-    if _yandex_is_confident(yandex):
-        candidates = _build_candidates(yandex, [])
-        cache[key] = candidates
-        return candidates
-
     with ThreadPoolExecutor(max_workers=2) as pool:
         yandex_future = pool.submit(_search_yandex, client, clean_title, detection)
         mb_future = pool.submit(_search_musicbrainz, clean_title)
@@ -148,16 +133,10 @@ def lookup_artists(
     return candidates
 
 
-def resolve_track_artist(
-    client: YandexMusicClient,
+def resolve_with_candidates(
     track: TrackRef,
-    detection: DetectionConfig,
-    cache: dict[str, list[ArtistCandidate]],
+    candidates: list[ArtistCandidate],
 ) -> ArtistResolution:
-    if track.is_user_upload:
-        return ArtistResolution(TrackStatus.ORIGINAL, [], [], track.artist)
-
-    candidates = lookup_artists(client, track.title, detection, cache)
     if not candidates:
         return ArtistResolution(TrackStatus.ORIGINAL, ["artist_unknown"], [], None)
 
@@ -189,3 +168,16 @@ def resolve_track_artist(
         candidates,
         top.artist,
     )
+
+
+def resolve_track_artist(
+    client: YandexMusicClient,
+    track: TrackRef,
+    detection: DetectionConfig,
+    cache: dict[str, list[ArtistCandidate]],
+) -> ArtistResolution:
+    if track.is_user_upload:
+        return ArtistResolution(TrackStatus.ORIGINAL, [], [], track.artist)
+
+    candidates = lookup_artists(client, track.title, detection, cache)
+    return resolve_with_candidates(track, candidates)

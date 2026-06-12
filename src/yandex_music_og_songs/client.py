@@ -13,7 +13,12 @@ _BATCH_SIZE = 150
 
 class YandexMusicClient:
     def __init__(self, token: str):
+        self._token = token
         self._client = Client(token).init()
+
+    @property
+    def token(self) -> str:
+        return self._token
 
     @classmethod
     def from_config(cls, config: AppConfig, token_override: Optional[str] = None) -> "YandexMusicClient":

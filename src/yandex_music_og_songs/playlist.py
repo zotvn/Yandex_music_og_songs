@@ -5,12 +5,17 @@ from typing import Iterable, Optional
 
 from yandex_music import Playlist, Track
 
-from yandex_music_og_songs.artist_resolver import ArtistResolution, resolve_track_artist
+from yandex_music_og_songs.artist_resolver import ArtistResolution
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import AppConfig
 from yandex_music_og_songs.detector import detect_track
 from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, TrackRef, TrackStatus
 from yandex_music_og_songs.normalizer import normalize_text, primary_artist
+from yandex_music_og_songs.parallel import (
+    fetch_full_tracks_parallel,
+    prefetch_artist_candidates,
+    resolve_from_cache,
+)
 from yandex_music_og_songs.report import print_choices_section, print_scan_header, print_scan_summary, print_track_line
 
 
@@ -31,9 +36,9 @@ def _track_ref_from_yandex(track: Track, album_id: Optional[int]) -> TrackRef:
     )
 
 
-def load_playlist_tracks(client: YandexMusicClient, playlist: Playlist) -> PlaylistScanResult:
+def load_playlist_tracks(client: YandexMusicClient, playlist: Playlist, config: AppConfig) -> PlaylistScanResult:
     shorts = client.playlist_track_shorts(playlist)
-    full_tracks = client.fetch_full_tracks(shorts)
+    full_tracks = fetch_full_tracks_parallel(client.token, shorts, config.performance)
     scanned: list[ScannedTrack] = []
 
     for index, track in enumerate(full_tracks):
@@ -80,9 +85,32 @@ def scan_playlist(
             tracks=[],
         )
 
-    full_tracks = client.fetch_full_tracks(shorts)
-    scanned: list[ScannedTrack] = []
+    full_tracks = fetch_full_tracks_parallel(client.token, shorts, config.performance)
+    detected: list[tuple[int, TrackRef, TrackStatus, list[str]]] = []
+
+    for index, track in enumerate(full_tracks):
+        if track is None:
+            continue
+        album_id = shorts[index].album_id if index < len(shorts) and shorts[index] else None
+        track_ref = _track_ref_from_yandex(track, album_id)
+        status, reasons = detect_track(track_ref, config.detection)
+        detected.append((index, track_ref, status, list(reasons)))
+
     artist_cache: dict[str, list] = {}
+    if artist_check:
+        titles_to_check = [
+            track_ref.title
+            for _, track_ref, status, _ in detected
+            if status == TrackStatus.ORIGINAL and not track_ref.is_user_upload
+        ]
+        artist_cache = prefetch_artist_candidates(
+            client.token,
+            titles_to_check,
+            config.detection,
+            config.performance,
+        )
+
+    scanned: list[ScannedTrack] = []
     resolution_cache: dict[str, ArtistResolution] = {}
 
     result_header = PlaylistScanResult(
@@ -94,13 +122,7 @@ def scan_playlist(
     if stream:
         print_scan_header(result_header)
 
-    for index, track in enumerate(full_tracks):
-        if track is None:
-            continue
-
-        album_id = shorts[index].album_id if index < len(shorts) and shorts[index] else None
-        track_ref = _track_ref_from_yandex(track, album_id)
-        status, reasons = detect_track(track_ref, config.detection)
+    for index, track_ref, status, reasons in detected:
         candidates = []
         expected = None
 
@@ -109,12 +131,7 @@ def scan_playlist(
             if cache_key in resolution_cache:
                 resolution = resolution_cache[cache_key]
             else:
-                resolution = resolve_track_artist(
-                    client,
-                    track_ref,
-                    config.detection,
-                    artist_cache,
-                )
+                resolution = resolve_from_cache(track_ref, config.detection, artist_cache)
                 resolution_cache[cache_key] = resolution
             status = resolution.status
             reasons.extend(resolution.reasons)

@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from yandex_music_og_songs.config import AppConfig
 from yandex_music_og_songs.models import TrackStatus
@@ -29,10 +29,14 @@ def test_scan_playlist_marks_fake_and_original():
     original_track = _make_track(id=2, title="Real Song", artist="Artist B", album_id=101, track_source="OWN")
 
     client = MagicMock()
+    client.token = "test-token"
     client.playlist_track_shorts.return_value = playlist.tracks
-    client.fetch_full_tracks.return_value = [fake_track, original_track]
 
-    result = scan_playlist(client, playlist, AppConfig(), artist_check=False)
+    with patch(
+        "yandex_music_og_songs.playlist.fetch_full_tracks_parallel",
+        return_value=[fake_track, original_track],
+    ):
+        result = scan_playlist(client, playlist, AppConfig(), artist_check=False)
 
     assert result.kind == 42
     assert result.track_count == 2
