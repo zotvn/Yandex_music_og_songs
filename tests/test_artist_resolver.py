@@ -8,7 +8,7 @@ from yandex_music_og_songs.artist_resolver import (
     yandex_is_conclusive,
 )
 from yandex_music_og_songs.config import DetectionConfig
-from yandex_music_og_songs.models import TrackRef, TrackStatus
+from yandex_music_og_songs.models import CatalogHit, TrackRef, TrackStatus
 
 
 def test_build_candidates_merges_sources():
@@ -24,17 +24,21 @@ def test_yandex_conclusive_when_unanimous():
     assert yandex_is_conclusive([]) is False
 
 
-def test_needs_musicbrainz_only_when_ambiguous():
-    assert needs_musicbrainz(["sombr", "sombr", "sombr"]) is False
-    assert needs_musicbrainz([]) is True
-    assert needs_musicbrainz(["A", "B", "A", "B"]) is True
+def test_needs_musicbrainz_when_catalog_signal_weak():
+    detection = DetectionConfig()
+    hits = [CatalogHit("Zamyr", "Swing Lynn", 1000)]
+    assert needs_musicbrainz(["Zamyr"], hits, "Swing Lynn", detection=detection) is True
 
 
 def test_lookup_skips_musicbrainz_when_conclusive():
     client = MagicMock()
-    with patch("yandex_music_og_songs.artist_resolver._search_yandex", return_value=["sombr", "sombr"]):
+    hits = [
+        CatalogHit("sombr", "back to friends", 1000),
+        CatalogHit("sombr", "back to friends", 1000),
+    ]
+    with patch("yandex_music_og_songs.artist_resolver.search_catalog", return_value=hits):
         with patch("yandex_music_og_songs.artist_resolver._search_musicbrainz") as mb:
-            lookup_artists(client, "back to friends", DetectionConfig(), {})
+            lookup_artists(client, "back to friends", DetectionConfig(), {}, track_artist="sombr")
     mb.assert_not_called()
 
 

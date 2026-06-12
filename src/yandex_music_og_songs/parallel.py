@@ -11,18 +11,18 @@ from yandex_music.track_short import TrackShort
 
 from yandex_music_og_songs.artist_cache import ArtistLookupCache
 from yandex_music_og_songs.artist_resolver import (
-    ArtistResolution,
     _build_candidates,
     _search_musicbrainz,
-    _search_yandex,
     needs_musicbrainz,
-    resolve_with_candidates,
+    official_artists_from_hits,
 )
+from yandex_music_og_songs.catalog import search_catalog
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import DetectionConfig, PerformanceConfig
-from yandex_music_og_songs.models import ArtistCandidate, TrackRef, TrackStatus
+from yandex_music_og_songs.models import TitleLookup
 from yandex_music_og_songs.network import retry_network
-from yandex_music_og_songs.normalizer import base_title, normalize_text
+from yandex_music_og_songs.normalizer import base_title
+from yandex_music_og_songs.verifier import lookup_cache_key
 
 _thread_local = threading.local()
 _mb_lock = threading.Lock()
@@ -39,28 +39,16 @@ def _thread_client(token: str) -> YandexMusicClient:
     return client
 
 
-def _search_musicbrainz_throttled(title: str) -> list[str]:
-    global _mb_last_at, _mb_calls
-    with _mb_lock:
-        wait = 1.05 - (time.monotonic() - _mb_last_at)
-        if wait > 0:
-            time.sleep(wait)
-        artists = _search_musicbrainz(title)
-        _mb_last_at = time.monotonic()
-        _mb_calls += 1
-        return artists
-
-
-def _lookup_title(
+def _lookup_title_entry(
     token: str,
     title: str,
+    artist: str,
     detection: DetectionConfig,
     perf: PerformanceConfig,
     disk_cache: ArtistLookupCache | None,
-) -> tuple[str, list[ArtistCandidate]]:
-    global _mb_skipped
-    clean_title = base_title(title, detection.title_suffix_patterns)
-    key = normalize_text(clean_title)
+) -> tuple[str, TitleLookup]:
+    global _mb_skipped, _mb_calls, _mb_last_at
+    key = lookup_cache_key(title, detection)
 
     if disk_cache is not None:
         cached = disk_cache.get(key)
@@ -68,54 +56,78 @@ def _lookup_title(
             return key, cached
 
     client = _thread_client(token)
-    yandex = retry_network(
-        lambda: _search_yandex(client, clean_title, detection),
-        label=f"поиск «{clean_title[:40]}»",
-    )
 
-    musicbrainz: list[str] = []
-    if perf.musicbrainz_mode == "never":
-        _mb_skipped += 1
-    elif perf.musicbrainz_mode == "always" or needs_musicbrainz(yandex, always=False):
-        musicbrainz = _search_musicbrainz_throttled(clean_title)
-    else:
-        _mb_skipped += 1
+    def _do_lookup() -> TitleLookup:
+        global _mb_calls, _mb_skipped, _mb_last_at
+        clean_title = base_title(title, detection.title_suffix_patterns)
+        hits = search_catalog(client, clean_title, detection)
+        yandex = official_artists_from_hits(hits, clean_title, detection)
 
-    candidates = _build_candidates(yandex, musicbrainz)
+        musicbrainz: list[str] = []
+        if perf.musicbrainz_mode == "never":
+            _mb_skipped += 1
+        elif perf.musicbrainz_mode == "always" or needs_musicbrainz(
+            yandex,
+            hits,
+            clean_title,
+            track_artist=artist,
+            detection=detection,
+        ):
+            with _mb_lock:
+                wait = 1.05 - (time.monotonic() - _mb_last_at)
+                if wait > 0:
+                    time.sleep(wait)
+                musicbrainz = _search_musicbrainz(clean_title)
+                _mb_last_at = time.monotonic()
+                _mb_calls += 1
+        else:
+            _mb_skipped += 1
+
+        candidates = _build_candidates(yandex, musicbrainz)
+        return TitleLookup(candidates=candidates, hits=hits)
+
+    lookup = retry_network(_do_lookup, label=f"поиск «{base_title(title, detection.title_suffix_patterns)[:40]}»")
     if disk_cache is not None:
-        disk_cache.put(key, candidates)
-    return key, candidates
+        disk_cache.put(key, lookup)
+    return key, lookup
 
 
-def prefetch_artist_candidates(
+def prefetch_title_lookups(
     token: str,
-    titles: list[str],
+    tracks: list[tuple[str, str]],
     detection: DetectionConfig,
     perf: PerformanceConfig,
     disk_cache: ArtistLookupCache | None = None,
-) -> dict[str, list[ArtistCandidate]]:
+) -> dict[str, TitleLookup]:
     global _mb_calls, _mb_skipped
     _mb_calls = 0
     _mb_skipped = 0
 
-    unique = list(dict.fromkeys(titles))
+    unique: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for title, artist in tracks:
+        key = lookup_cache_key(title, detection)
+        if key not in seen:
+            seen.add(key)
+            unique.append((title, artist))
+
     if not unique:
         return {}
 
-    cache: dict[str, list[ArtistCandidate]] = {}
+    cache: dict[str, TitleLookup] = {}
     from_disk = 0
     if disk_cache is not None:
-        for title in unique:
-            key = normalize_text(base_title(title, detection.title_suffix_patterns))
+        for title, _artist in unique:
+            key = lookup_cache_key(title, detection)
             cached = disk_cache.get(key)
             if cached is not None:
                 cache[key] = cached
                 from_disk += 1
 
     to_fetch = [
-        title
-        for title in unique
-        if normalize_text(base_title(title, detection.title_suffix_patterns)) not in cache
+        (title, artist)
+        for title, artist in unique
+        if lookup_cache_key(title, detection) not in cache
     ]
     total = len(unique)
     done = from_disk
@@ -133,12 +145,12 @@ def prefetch_artist_candidates(
         )
         with ThreadPoolExecutor(max_workers=perf.artist_workers) as pool:
             futures = {
-                pool.submit(_lookup_title, token, title, detection, perf, disk_cache): title
-                for title in to_fetch
+                pool.submit(_lookup_title_entry, token, title, artist, detection, perf, disk_cache): title
+                for title, artist in to_fetch
             }
             for future in as_completed(futures):
-                key, candidates = future.result()
-                cache[key] = candidates
+                key, lookup = future.result()
+                cache[key] = lookup
                 with done_lock:
                     done += 1
                     if done % 20 == 0 or done == total:
@@ -149,25 +161,12 @@ def prefetch_artist_candidates(
 
     if perf.musicbrainz_mode == "auto" and to_fetch:
         print(
-            f"  MusicBrainz: { _mb_calls} запросов, пропущено {_mb_skipped} (Yandex достаточно)",
+            f"  MusicBrainz: {_mb_calls} запросов, пропущено {_mb_skipped}",
             file=sys.stderr,
             flush=True,
         )
 
     return cache
-
-
-def resolve_from_cache(
-    track: TrackRef,
-    detection: DetectionConfig,
-    cache: dict[str, list[ArtistCandidate]],
-) -> ArtistResolution:
-    if track.is_user_upload:
-        return ArtistResolution(TrackStatus.ORIGINAL, [], [], track.artist)
-
-    key = normalize_text(base_title(track.title, detection.title_suffix_patterns))
-    candidates = cache.get(key, [])
-    return resolve_with_candidates(track, candidates)
 
 
 def _fetch_chunk(token: str, chunk_shorts: list[TrackShort]) -> list[Optional[Track]]:

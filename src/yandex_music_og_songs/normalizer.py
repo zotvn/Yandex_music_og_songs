@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from difflib import SequenceMatcher
 
 
 def normalize_text(value: str) -> str:
@@ -26,3 +27,7 @@ def base_title(title: str, title_suffix_patterns: list[str]) -> str:
 
 def primary_artist(artists: list[str]) -> str:
     return artists[0] if artists else "Unknown"
+
+
+def text_similarity(a: str, b: str) -> float:
+    return SequenceMatcher(None, normalize_text(a), normalize_text(b)).ratio()

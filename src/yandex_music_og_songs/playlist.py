@@ -6,19 +6,14 @@ from typing import Iterable, Optional
 from yandex_music import Playlist, Track
 
 from yandex_music_og_songs.artist_cache import ArtistLookupCache
-from yandex_music_og_songs.artist_resolver import ArtistResolution
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import AppConfig
-from yandex_music_og_songs.detector import detect_track
 from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, TrackRef, TrackStatus
-from yandex_music_og_songs.normalizer import normalize_text, primary_artist
-from yandex_music_og_songs.parallel import (
-    fetch_full_tracks_parallel,
-    prefetch_artist_candidates,
-    resolve_from_cache,
-)
+from yandex_music_og_songs.normalizer import primary_artist
+from yandex_music_og_songs.parallel import fetch_full_tracks_parallel, prefetch_title_lookups
 from yandex_music_og_songs.report import print_choices_section, print_scan_header, print_scan_summary, print_track_line
 from yandex_music_og_songs.scan_cache import load_scan_result, scan_cache_path
+from yandex_music_og_songs.verifier import TitleLookup, lookup_cache_key, verify_track
 
 
 def _track_ref_from_yandex(track: Track, album_id: Optional[int]) -> TrackRef:
@@ -65,35 +60,12 @@ def load_playlist_tracks(client: YandexMusicClient, playlist: Playlist, config: 
     )
 
 
-def _resolution_cache_key(track: TrackRef) -> str:
-    return f"{normalize_text(track.title)}|{normalize_text(track.artist)}"
-
-
-def _can_reuse_artist_resolution(prev: ScannedTrack, track_ref: TrackRef) -> bool:
+def _can_reuse_previous(prev: ScannedTrack, track_ref: TrackRef) -> bool:
     if prev.track.title != track_ref.title or prev.track.artist != track_ref.artist:
         return False
-    if any(reason.startswith("pick_version") for reason in prev.reasons):
-        return False
-    if prev.status == TrackStatus.CHOOSE and "pick_artist" in prev.reasons:
-        return True
-    if any(reason.startswith("wrong_artist") for reason in prev.reasons):
-        return True
-    if "artist_unknown" in prev.reasons:
-        return True
     if prev.status == TrackStatus.ORIGINAL:
-        return not any(
-            reason.startswith("wrong_artist") or reason == "artist_unknown" for reason in prev.reasons
-        )
-    return False
-
-
-def _resolution_from_previous(prev: ScannedTrack) -> ArtistResolution:
-    return ArtistResolution(
-        status=prev.status,
-        reasons=[r for r in prev.reasons if r != "skipped_by_user"],
-        candidates=prev.artist_candidates,
-        expected_artist=prev.expected_artist,
-    )
+        return False
+    return prev.status in {TrackStatus.FAKE, TrackStatus.CHOOSE, TrackStatus.SKIP}
 
 
 def scan_playlist(
@@ -119,54 +91,42 @@ def scan_playlist(
     if artist_check and config.performance.reuse_scan_cache and cache_path.exists():
         previous = load_scan_result(cache_path)
         previous_by_id = {item.track.track_id: item for item in previous.tracks}
-        if previous_by_id:
-            print(f"Кэш скана: {len(previous_by_id)} треков", file=sys.stderr, flush=True)
 
     full_tracks = fetch_full_tracks_parallel(client.token, shorts, config.performance)
-    detected: list[tuple[int, TrackRef, TrackStatus, list[str]]] = []
-    reused_artist: dict[int, ArtistResolution] = {}
+    track_rows: list[tuple[int, TrackRef]] = []
+    reused: dict[int, ScannedTrack] = {}
 
     for index, track in enumerate(full_tracks):
         if track is None:
             continue
         album_id = shorts[index].album_id if index < len(shorts) and shorts[index] else None
         track_ref = _track_ref_from_yandex(track, album_id)
-        status, reasons = detect_track(track_ref, config.detection)
-        detected.append((index, track_ref, status, list(reasons)))
+        track_rows.append((index, track_ref))
 
-        if (
-            artist_check
-            and status == TrackStatus.ORIGINAL
-            and not track_ref.is_user_upload
-            and previous_by_id
-        ):
+        if artist_check and previous_by_id:
             prev = previous_by_id.get(track_ref.track_id)
-            if prev and _can_reuse_artist_resolution(prev, track_ref):
-                reused_artist[index] = _resolution_from_previous(prev)
+            if prev and _can_reuse_previous(prev, track_ref):
+                reused[index] = prev
 
-    artist_cache: dict[str, list] = {}
+    lookup_cache: dict[str, TitleLookup] = {}
     if artist_check:
-        titles_to_check = [
-            track_ref.title
-            for index, track_ref, status, _ in detected
-            if status == TrackStatus.ORIGINAL
-            and not track_ref.is_user_upload
-            and index not in reused_artist
+        to_verify = [
+            (track_ref.title, track_ref.artist)
+            for index, track_ref in track_rows
+            if not track_ref.is_user_upload and index not in reused
         ]
         disk_cache = ArtistLookupCache() if config.performance.artist_disk_cache else None
-        artist_cache = prefetch_artist_candidates(
+        lookup_cache = prefetch_title_lookups(
             client.token,
-            titles_to_check,
+            to_verify,
             config.detection,
             config.performance,
             disk_cache=disk_cache,
         )
-        if reused_artist:
-            print(f"  повторный скан: {len(reused_artist)} без запросов", file=sys.stderr, flush=True)
+        if reused:
+            print(f"  повторный скан: {len(reused)} из кэша", file=sys.stderr, flush=True)
 
     scanned: list[ScannedTrack] = []
-    resolution_cache: dict[str, ArtistResolution] = {}
-
     result_header = PlaylistScanResult(
         kind=playlist.kind,
         title=playlist.title or f"Playlist {playlist.kind}",
@@ -176,33 +136,23 @@ def scan_playlist(
     if stream:
         print_scan_header(result_header)
 
-    for index, track_ref, status, reasons in detected:
-        candidates = []
-        expected = None
+    for index, track_ref in track_rows:
+        if index in reused:
+            item = reused[index]
+        elif not artist_check or track_ref.is_user_upload:
+            item = ScannedTrack(index=index, track=track_ref, status=TrackStatus.ORIGINAL, reasons=[])
+        else:
+            key = lookup_cache_key(track_ref.title, config.detection)
+            result = verify_track(track_ref, config.detection, lookup_cache.get(key))
+            item = ScannedTrack(
+                index=index,
+                track=track_ref,
+                status=result.status,
+                reasons=result.reasons,
+                artist_candidates=result.candidates,
+                expected_artist=result.expected_artist,
+            )
 
-        if status == TrackStatus.ORIGINAL and artist_check:
-            if index in reused_artist:
-                resolution = reused_artist[index]
-            else:
-                cache_key = _resolution_cache_key(track_ref)
-                if cache_key in resolution_cache:
-                    resolution = resolution_cache[cache_key]
-                else:
-                    resolution = resolve_from_cache(track_ref, config.detection, artist_cache)
-                    resolution_cache[cache_key] = resolution
-            status = resolution.status
-            reasons.extend(resolution.reasons)
-            candidates = resolution.candidates
-            expected = resolution.expected_artist
-
-        item = ScannedTrack(
-            index=index,
-            track=track_ref,
-            status=status,
-            reasons=reasons,
-            artist_candidates=candidates,
-            expected_artist=expected,
-        )
         scanned.append(item)
         if stream:
             print_track_line(item)

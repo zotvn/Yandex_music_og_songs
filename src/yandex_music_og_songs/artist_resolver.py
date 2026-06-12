@@ -5,17 +5,20 @@ import re
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from typing import Optional
 
+from yandex_music_og_songs.catalog import (
+    is_suspicious_artist,
+    official_catalog_signal,
+    search_catalog,
+)
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import DetectionConfig
-from yandex_music_og_songs.models import ArtistCandidate, TrackRef, TrackStatus
-from yandex_music_og_songs.normalizer import base_title, normalize_text
+from yandex_music_og_songs.models import ArtistCandidate, CatalogHit, TitleLookup, TrackRef, TrackStatus
+from yandex_music_og_songs.normalizer import base_title, normalize_text, text_similarity
 
-_USER_AGENT = "YandexMusicOGSongs/0.3 (https://github.com/zotvn/Yandex_music_og_songs)"
+_USER_AGENT = "YandexMusicOGSongs/0.4 (https://github.com/zotvn/Yandex_music_og_songs)"
 _AMBIGUOUS_GAP = 0.15
 _MATCH_THRESHOLD = 0.82
 
@@ -29,33 +32,14 @@ class ArtistResolution:
 
 
 def _similarity(a: str, b: str) -> float:
-    return SequenceMatcher(None, normalize_text(a), normalize_text(b)).ratio()
+    return text_similarity(a, b)
 
 
-def _is_fake_version(version: str, detection: DetectionConfig) -> bool:
+def is_fake_version(version: str, detection: DetectionConfig) -> bool:
     for pattern in detection.fake_version_patterns:
         if re.search(pattern, version, flags=re.IGNORECASE):
             return True
     return False
-
-
-def _search_yandex(client: YandexMusicClient, title: str, detection: DetectionConfig) -> list[str]:
-    search = client.raw.search(title, type_="track")
-    if not search or not search.tracks or not search.tracks.results:
-        return []
-
-    artists: list[str] = []
-    for track in search.tracks.results[:12]:
-        if not track.artists or not track.title:
-            continue
-        if track.version and _is_fake_version(track.version, detection):
-            continue
-        if _similarity(title, track.title) < 0.72:
-            continue
-        name = track.artists[0].name
-        if name:
-            artists.append(name)
-    return artists
 
 
 def _search_musicbrainz(title: str) -> list[str]:
@@ -82,7 +66,6 @@ def _search_musicbrainz(title: str) -> list[str]:
 
 
 def yandex_is_conclusive(yandex: list[str]) -> bool:
-    """Yandex alone is enough when search results clearly agree on the artist."""
     if not yandex:
         return False
 
@@ -98,8 +81,20 @@ def yandex_is_conclusive(yandex: list[str]) -> bool:
     return False
 
 
-def needs_musicbrainz(yandex: list[str], *, always: bool = False) -> bool:
+def needs_musicbrainz(
+    yandex: list[str],
+    hits: list[CatalogHit],
+    title: str,
+    *,
+    always: bool = False,
+    track_artist: str = "",
+    detection: DetectionConfig | None = None,
+) -> bool:
     if always:
+        return True
+    if detection and track_artist and is_suspicious_artist(track_artist, detection):
+        return True
+    if detection and official_catalog_signal(hits, title, detection) < 2:
         return True
     return not yandex_is_conclusive(yandex)
 
@@ -134,27 +129,67 @@ def _build_candidates(yandex: list[str], musicbrainz: list[str]) -> list[ArtistC
     ]
 
 
+def official_artists_from_hits(hits: list[CatalogHit], title: str, detection: DetectionConfig) -> list[str]:
+    artists: list[str] = []
+    for hit in hits:
+        if is_suspicious_artist(hit.artist, detection):
+            continue
+        if _similarity(title, hit.title) < 0.72:
+            continue
+        artists.append(hit.artist)
+    return artists
+
+
+def lookup_title(
+    client: YandexMusicClient,
+    title: str,
+    detection: DetectionConfig,
+    *,
+    musicbrainz_mode: str = "auto",
+    track_artist: str = "",
+) -> TitleLookup:
+    clean_title = base_title(title, detection.title_suffix_patterns)
+    hits = search_catalog(client, clean_title, detection)
+    yandex = official_artists_from_hits(hits, clean_title, detection)
+
+    musicbrainz: list[str] = []
+    if musicbrainz_mode == "never":
+        pass
+    elif musicbrainz_mode == "always" or needs_musicbrainz(
+        yandex,
+        hits,
+        clean_title,
+        track_artist=track_artist,
+        detection=detection,
+    ):
+        musicbrainz = _search_musicbrainz(clean_title)
+
+    candidates = _build_candidates(yandex, musicbrainz)
+    return TitleLookup(candidates=candidates, hits=hits)
+
+
 def lookup_artists(
     client: YandexMusicClient,
     title: str,
     detection: DetectionConfig,
-    cache: dict[str, list[ArtistCandidate]],
+    cache: dict[str, TitleLookup],
     *,
     musicbrainz_mode: str = "auto",
+    track_artist: str = "",
 ) -> list[ArtistCandidate]:
     key = normalize_text(base_title(title, detection.title_suffix_patterns))
     if key in cache:
-        return cache[key]
+        return cache[key].candidates
 
-    clean_title = base_title(title, detection.title_suffix_patterns)
-    yandex = _search_yandex(client, clean_title, detection)
-    musicbrainz: list[str] = []
-    if needs_musicbrainz(yandex, always=musicbrainz_mode == "always"):
-        musicbrainz = _search_musicbrainz(clean_title)
-
-    candidates = _build_candidates(yandex, musicbrainz)
-    cache[key] = candidates
-    return candidates
+    result = lookup_title(
+        client,
+        title,
+        detection,
+        musicbrainz_mode=musicbrainz_mode,
+        track_artist=track_artist,
+    )
+    cache[key] = result
+    return result.candidates
 
 
 def resolve_with_candidates(
@@ -198,10 +233,10 @@ def resolve_track_artist(
     client: YandexMusicClient,
     track: TrackRef,
     detection: DetectionConfig,
-    cache: dict[str, list[ArtistCandidate]],
+    cache: dict[str, TitleLookup],
 ) -> ArtistResolution:
     if track.is_user_upload:
         return ArtistResolution(TrackStatus.ORIGINAL, [], [], track.artist)
 
-    candidates = lookup_artists(client, track.title, detection, cache)
+    candidates = lookup_artists(client, track.title, detection, cache, track_artist=track.artist)
     return resolve_with_candidates(track, candidates)

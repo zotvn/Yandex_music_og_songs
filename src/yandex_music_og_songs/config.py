@@ -73,8 +73,32 @@ class DetectionConfig(BaseModel):
             r"pitch\s*shift",
         ]
     )
+    suspicious_artist_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"tribute",
+            r"karaoke",
+            r"\b8d\b",
+            r"tiktok",
+            r"rhythm\s*rebel",
+            r"ameritz",
+            r"live\s*beat",
+            r"sky\s*trucking",
+            r"funky\s*groove",
+            r"lil\s*flop",
+            r"jxctis",
+            r"\bcover\b",
+            r"reverb",
+            r"studio\s*version",
+            r"xtm\s*remix",
+            r"remix\s*edit",
+            r"sunbeams",
+            r"tim\s*mahendran",
+        ]
+    )
+    duration_tolerance_ms: int = 5000
+    duration_tolerance_ratio: float = 0.05
     treat_ugc_as_fake: bool = False
-    treat_replaced_to_ugc: bool = True
+    treat_replaced_to_ugc: bool = False
 
     @property
     def title_suffix_patterns(self) -> list[str]:

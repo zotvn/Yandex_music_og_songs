@@ -35,6 +35,20 @@ class ArtistCandidate:
     score: float
 
 
+@dataclass(frozen=True)
+class CatalogHit:
+    artist: str
+    title: str
+    duration_ms: int | None
+    version: str | None = None
+
+
+@dataclass(frozen=True)
+class TitleLookup:
+    candidates: list[ArtistCandidate]
+    hits: list[CatalogHit]
+
+
 @dataclass
 class ScannedTrack:
     index: int

@@ -10,7 +10,9 @@ def _make_track(**kwargs):
     track.id = kwargs.get("id", 1)
     track.title = kwargs.get("title", "Song")
     track.version = kwargs.get("version")
-    track.artists = [MagicMock(name=kwargs.get("artist", "Artist"))]
+    artist = MagicMock()
+    artist.name = kwargs.get("artist", "Artist")
+    track.artists = [artist]
     track.albums = [MagicMock(id=kwargs.get("album_id", 100))]
     track.duration_ms = kwargs.get("duration_ms", 200000)
     track.track_source = kwargs.get("track_source")
@@ -35,8 +37,11 @@ def test_scan_playlist_marks_fake_and_original():
     with patch(
         "yandex_music_og_songs.playlist.fetch_full_tracks_parallel",
         return_value=[fake_track, original_track],
+    ), patch(
+        "yandex_music_og_songs.playlist.prefetch_title_lookups",
+        return_value={},
     ):
-        result = scan_playlist(client, playlist, AppConfig(), artist_check=False)
+        result = scan_playlist(client, playlist, AppConfig(), artist_check=True)
 
     assert result.kind == 42
     assert result.track_count == 2
