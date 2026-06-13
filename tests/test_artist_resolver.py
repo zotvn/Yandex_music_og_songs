@@ -23,11 +23,18 @@ def test_adelaide_not_equivalent_to_adele():
 
 
 def test_resolve_wrong_artist():
-    track = TrackRef("1", "2", "Skyfall", "Adelaide")
+    track = TrackRef("1", "2", "Skyfall", "Random Cover Band")
     candidates = [ArtistCandidate("Adele", ("musicbrainz",), 1.0)]
     resolution = resolve_with_candidates(track, candidates, 0.75, 0.88)
     assert resolution.status == TrackStatus.FAKE
     assert "wrong_artist:Adele" in resolution.reasons
+
+
+def test_youtube_only_does_not_fake():
+    track = TrackRef("1", "2", "death bed", "Powfu")
+    candidates = [ArtistCandidate("Garbage", ("youtube",), 0.8)]
+    resolution = resolve_with_candidates(track, candidates, 0.75, 0.88)
+    assert resolution.status == TrackStatus.ORIGINAL
 
 
 def test_lookup_truth_calls_mb():

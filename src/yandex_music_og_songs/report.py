@@ -70,7 +70,8 @@ def format_fake_section(result: PlaylistScanResult) -> list[str]:
     lines = [
         "",
         "=" * 72,
-        "FAKE — choices.txt:  N: skip (оставить)  или  N: replace (заменить)",
+        "К ЗАМЕНЕ (пиши в choices.txt только replace)",
+        "choices.txt:  94: replace",
         "=" * 72,
     ]
     for item in fake_tracks:

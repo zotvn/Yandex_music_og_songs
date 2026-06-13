@@ -3,11 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from yandex_music_og_songs.artist_resolver import (
-    artist_matches,
-    pick_expected_artist,
-    resolve_with_candidates,
-)
+from yandex_music_og_songs.artist_resolver import resolve_with_candidates
 from yandex_music_og_songs.catalog import (
     find_clean_yandex_match,
     is_suspicious_artist,
@@ -32,6 +28,12 @@ class VerifyResult:
 
 def lookup_cache_key(title: str, detection: DetectionConfig) -> str:
     return normalize_text(base_title(title, detection.title_suffix_patterns))
+
+
+def needs_artist_lookup(track: TrackRef, local_reasons: list[str], detection: DetectionConfig) -> bool:
+    if local_reasons:
+        return True
+    return is_suspicious_artist(track.artist, detection)
 
 
 def _prioritize_reasons(reasons: list[str]) -> list[str]:
@@ -85,10 +87,16 @@ def verify_track(
         return VerifyResult(TrackStatus.ORIGINAL, [], [], track.artist)
 
     _det_status, local_reasons = detect_track(track, detection)
+
+    if not needs_artist_lookup(track, local_reasons, detection):
+        return VerifyResult(TrackStatus.ORIGINAL, [], [], track.artist)
+
     candidates = truth.candidates if truth else []
     threshold = detection.artist_match_threshold
 
     if is_suspicious_artist(track.artist, detection):
+        from yandex_music_og_songs.artist_resolver import pick_expected_artist
+
         expected = pick_expected_artist(candidates)
         reasons = list(local_reasons)
         if expected:
@@ -106,6 +114,9 @@ def verify_track(
     )
 
     if resolution and resolution.status == TrackStatus.CHOOSE:
+        mb_candidates = [c for c in resolution.candidates if "musicbrainz" in c.sources]
+        if len(mb_candidates) < 2:
+            return VerifyResult(TrackStatus.ORIGINAL, [], candidates, track.artist)
         return VerifyResult(
             TrackStatus.CHOOSE,
             ["pick_artist", *local_reasons],
@@ -114,20 +125,18 @@ def verify_track(
         )
 
     fake_reasons = list(local_reasons)
-    expected = resolution.expected_artist if resolution else pick_expected_artist(candidates)
+    expected = resolution.expected_artist if resolution else None
 
     if resolution and resolution.status == TrackStatus.FAKE:
         fake_reasons.extend(resolution.reasons)
-    elif resolution and resolution.status == TrackStatus.ORIGINAL and not local_reasons:
-        return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected)
-
-    if not fake_reasons and resolution and resolution.status == TrackStatus.ORIGINAL:
-        return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected)
+    elif resolution and resolution.status == TrackStatus.ORIGINAL:
+        if local_reasons:
+            fake_reasons.extend(local_reasons)
+        else:
+            return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected)
 
     if not fake_reasons:
-        if not candidates:
-            return VerifyResult(TrackStatus.ORIGINAL, ["artist_unknown"], [], None)
-        return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected)
+        return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected or track.artist)
 
     status = TrackStatus.FAKE
     if expected:

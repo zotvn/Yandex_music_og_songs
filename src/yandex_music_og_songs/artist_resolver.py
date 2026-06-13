@@ -114,14 +114,17 @@ def resolve_with_candidates(
     ok_threshold: float,
 ) -> ArtistResolution:
     if not candidates:
-        return ArtistResolution(TrackStatus.FAKE, ["artist_unknown"], [], None)
+        return ArtistResolution(TrackStatus.ORIGINAL, [], [], None)
 
     for candidate in candidates:
         if artists_equivalent(track.artist, candidate.artist, ok_threshold):
             return ArtistResolution(TrackStatus.ORIGINAL, [], candidates, candidate.artist)
 
     if len(candidates) == 1:
-        expected = candidates[0].artist
+        only = candidates[0]
+        if "musicbrainz" not in only.sources:
+            return ArtistResolution(TrackStatus.ORIGINAL, [], candidates, track.artist)
+        expected = only.artist
         if artists_clearly_different(track.artist, expected, threshold):
             return ArtistResolution(
                 TrackStatus.FAKE,
@@ -129,12 +132,11 @@ def resolve_with_candidates(
                 candidates,
                 expected,
             )
-        return ArtistResolution(
-            TrackStatus.FAKE,
-            [f"wrong_artist:{expected}"],
-            candidates,
-            expected,
-        )
+        return ArtistResolution(TrackStatus.ORIGINAL, [], candidates, track.artist)
+
+    mb_only = [c for c in candidates if "musicbrainz" in c.sources]
+    if not mb_only:
+        return ArtistResolution(TrackStatus.ORIGINAL, [], candidates, track.artist)
 
     top, second = candidates[0], candidates[1]
     if top.score - second.score < _AMBIGUOUS_GAP:
@@ -146,9 +148,11 @@ def resolve_with_candidates(
         )
 
     expected = top.artist
-    return ArtistResolution(
-        TrackStatus.FAKE,
-        [f"wrong_artist:{expected}"],
-        candidates,
-        expected,
-    )
+    if artists_clearly_different(track.artist, expected, threshold):
+        return ArtistResolution(
+            TrackStatus.FAKE,
+            [f"wrong_artist:{expected}"],
+            candidates,
+            expected,
+        )
+    return ArtistResolution(TrackStatus.ORIGINAL, [], candidates, track.artist)

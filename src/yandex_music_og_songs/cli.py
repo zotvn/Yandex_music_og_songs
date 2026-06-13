@@ -12,7 +12,8 @@ from yandex_music_og_songs.choices_io import apply_choices, parse_choices, write
 from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import AppConfig, PerformanceConfig
 from yandex_music_og_songs.playlist import load_playlist_tracks, scan_playlist, scan_playlists
-from yandex_music_og_songs.replace_io import write_replace_plan
+from yandex_music_og_songs.replace_io import replace_plan_path, write_replace_plan
+from yandex_music_og_songs.models import TrackStatus
 from yandex_music_og_songs.report import format_scan_text, print_choices_section, print_fake_section, print_scan_summary
 from yandex_music_og_songs.review_io import apply_review_marks, parse_review_file, write_plain_export, write_review_export
 from yandex_music_og_songs.scan_cache import load_scan_result, merge_scan_results, save_scan_result, scan_cache_path
@@ -148,11 +149,16 @@ def cmd_scan(parsed: ParsedArgs) -> None:
     if parsed.kind is not None:
         cache = scan_cache_path(parsed.kind, parsed.suffix)
         save_scan_result(result, cache)
-        write_replace_plan(result, Path(f"replace_{parsed.kind}{'_' + parsed.suffix if parsed.suffix else ''}.json"))
-        if result.fake_count or result.choose_count:
-            write_choices_template(result, Path("choices.txt"))
-            print("Создан choices.txt и replace_*.json", file=sys.stderr)
+        plan = replace_plan_path(parsed.kind, parsed.suffix)
+        write_replace_plan(result, plan)
+        write_choices_template(result, Path("choices.txt"))
         print(f"Кэш: {cache}", file=sys.stderr)
+        print(f"План замены: {plan}", file=sys.stderr)
+        if result.fake_count:
+            print(
+                f"FAKE: {result.fake_count} — после choose всё skip, кроме строк replace в choices.txt",
+                file=sys.stderr,
+            )
 
 
 def cmd_merge(parsed: ParsedArgs) -> None:
@@ -170,7 +176,8 @@ def cmd_merge(parsed: ParsedArgs) -> None:
     merged = merge_scan_results(paths)
     out = scan_cache_path(parsed.kind)
     save_scan_result(merged, out)
-    write_replace_plan(merged, Path(f"replace_{parsed.kind}.json"))
+    plan = replace_plan_path(parsed.kind)
+    write_replace_plan(merged, plan)
     write_choices_template(merged, Path("choices.txt"))
     print_scan_summary(merged)
     print(f"Объединено {len(paths)} файлов → {out}", file=sys.stderr)
@@ -219,11 +226,16 @@ def cmd_choose(parsed: ParsedArgs) -> None:
 
     result = apply_choices(base, parse_choices(parsed.path))
     save_scan_result(result, cache)
-    write_replace_plan(result, Path(f"replace_{parsed.kind}.json"))
+    plan = replace_plan_path(parsed.kind)
+    write_replace_plan(result, plan)
     print_scan_summary(result)
     print_fake_section(result)
     print_choices_section(result)
-    print(f"\nК замене: {result.fake_count} | пропуск: {result.skip_count}", file=sys.stderr)
+    to_replace = sum(1 for t in result.tracks if t.status == TrackStatus.FAKE and t.replace_track_id)
+    print(
+        f"\nК замене: {to_replace} | пропуск: {result.skip_count} | план: {plan}",
+        file=sys.stderr,
+    )
 
 
 def cmd_import(parsed: ParsedArgs) -> None:
@@ -261,10 +273,9 @@ def main(argv: Optional[list[str]] = None) -> None:
             "  scan 1020 --tail 150 --suffix b\n"
             "  merge 1020 scan_1020_a.json scan_1020_b.json\n"
             "\n"
-            "choices.txt:\n"
-            "  94: skip       оставить FAKE трек\n"
-            "  94: replace    заменить (если есть OG in ya)\n"
-            "  28: 1          выбрать артиста\n"
+            "choices.txt (после choose всё FAKE → skip, кроме replace):\n"
+            "  94: replace   заменить этот трек\n"
+            "  28: 1          выбрать артиста (CHOOSE)\n"
         )
         return
 

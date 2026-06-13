@@ -3,19 +3,26 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from yandex_music_og_songs.models import PlaylistScanResult, ScannedTrack, TrackStatus
+from yandex_music_og_songs.models import PlaylistScanResult, TrackStatus
+
+
+def replace_plan_path(kind: int, suffix: str = "") -> Path:
+    if suffix:
+        return Path(f"replace_{kind}_{suffix}.json")
+    return Path(f"replace_{kind}.json")
 
 
 def write_replace_plan(result: PlaylistScanResult, path: Path) -> None:
     items: list[dict] = []
     for item in result.tracks:
-        if item.status not in {TrackStatus.FAKE, TrackStatus.CHOOSE}:
+        if item.status != TrackStatus.FAKE:
             continue
-        action = "replace" if item.replace_track_id else "skip"
+        if not item.replace_track_id:
+            continue
         items.append(
             {
                 "index": item.index + 1,
-                "action": action,
+                "action": "replace",
                 "status": item.status.value,
                 "reasons": item.reasons,
                 "current": {

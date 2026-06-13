@@ -22,31 +22,42 @@ class UserChoice:
 
 
 def write_choices_template(result: PlaylistScanResult, path: Path) -> None:
+    actionable = [
+        item
+        for item in result.tracks
+        if item.status == TrackStatus.FAKE and item.replace_track_id
+    ]
+    choose_tracks = [item for item in result.tracks if item.status == TrackStatus.CHOOSE]
+
     lines = [
-        "# FAKE — оставить или заменить:",
-        "#   94: skip      оставить как есть",
-        "#   94: replace   заменить (если есть replace_track_id)",
+        "# По умолчанию ВСЁ FAKE остаётся (skip). Пиши только то, что МЕНЯТЬ:",
+        "#   94: replace   заменить на OG in ya",
         "# CHOOSE — выбрать артиста:",
-        "#   28: 1          вариант из списка",
-        "#   28: Adele       имя артиста",
+        "#   28: 1",
         "",
     ]
 
-    for item in result.tracks:
-        if item.status == TrackStatus.FAKE:
-            replace_hint = ""
-            if item.replace_track_id:
-                replace_hint = f" → {item.replace_track_id}:{item.replace_album_id or ''}"
+    if actionable:
+        lines.append("# --- можно заменить (есть OG in ya) ---")
+        for item in actionable:
             lines.append(f"{item.index + 1}. {item.track.artist} - {item.track.title}")
-            lines.append(f"   FAKE: {', '.join(item.reasons)}{replace_hint}")
+            lines.append(
+                f"   → {item.replace_track_id}:{item.replace_album_id or '?'} "
+                f"({item.expected_artist or '?'})"
+            )
             lines.append("")
 
-        elif item.status == TrackStatus.CHOOSE:
+    if choose_tracks:
+        lines.append("# --- выбор артиста ---")
+        for item in choose_tracks:
             lines.append(f"{item.index + 1}. {item.track.artist} - {item.track.title}")
             for idx, candidate in enumerate(item.artist_candidates, start=1):
                 sources = ", ".join(candidate.sources)
                 lines.append(f"  {idx}) {candidate.artist} [{sources}]")
             lines.append("")
+
+    if len(lines) <= 5:
+        lines.append("# Нечего менять — choices пуст.")
 
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
@@ -106,8 +117,22 @@ def apply_choices(result: PlaylistScanResult, choices: list[UserChoice]) -> Play
             )
             continue
 
-        if item.status == TrackStatus.FAKE and choice and choice.value.lower() in _REPLACE_VALUES:
-            updated.append(item)
+        if item.status == TrackStatus.FAKE:
+            if choice and choice.value.lower() in _REPLACE_VALUES:
+                updated.append(item)
+            else:
+                updated.append(
+                    ScannedTrack(
+                        index=item.index,
+                        track=item.track,
+                        status=TrackStatus.SKIP,
+                        reasons=[*item.reasons, "default_skip"],
+                        artist_candidates=item.artist_candidates,
+                        expected_artist=item.expected_artist,
+                        replace_track_id=item.replace_track_id,
+                        replace_album_id=item.replace_album_id,
+                    )
+                )
             continue
 
         if item.status == TrackStatus.CHOOSE and choice is not None:
