@@ -6,6 +6,8 @@ from typing import Optional
 from yandex_music_og_songs.config import DetectionConfig
 from yandex_music_og_songs.models import TrackRef, TrackStatus
 
+_PAREN_RE = re.compile(r"[\(\[]([^\)\]]+)[\)\]]", re.IGNORECASE)
+
 
 def _matches_any_pattern(value: str, patterns: list[str]) -> Optional[str]:
     for pattern in patterns:
@@ -14,27 +16,32 @@ def _matches_any_pattern(value: str, patterns: list[str]) -> Optional[str]:
     return None
 
 
-def _is_kept_version(version: str, keep_patterns: list[str]) -> bool:
-    return _matches_any_pattern(version, keep_patterns) is not None
+def _has_version_words(value: str, detection: DetectionConfig) -> bool:
+    return _matches_any_pattern(value, detection.version_word_patterns) is not None
 
 
 def detect_track(track: TrackRef, config: DetectionConfig) -> tuple[TrackStatus, list[str]]:
     reasons: list[str] = []
 
-    if config.treat_replaced_to_ugc and track.track_source == "OWN_REPLACED_TO_UGC":
-        reasons.append("track_source:OWN_REPLACED_TO_UGC")
+    if track.version and track.version.strip():
+        reasons.append("version:field")
+        if _has_version_words(track.version, config):
+            reasons.append("version:word")
 
-    if track.version:
-        version = track.version.strip()
-        if version and not _is_kept_version(version, config.keep_version_patterns):
-            if matched := _matches_any_pattern(version, config.fake_version_patterns):
-                reasons.append(f"version:{matched}")
+    for match in _PAREN_RE.finditer(track.title or ""):
+        content = match.group(1).strip()
+        if matched := _matches_any_pattern(content, config.title_paren_fake_patterns):
+            reasons.append(f"title_tag:{matched}")
+        elif _has_version_words(content, config):
+            reasons.append("title_tag:version")
 
-    if matched := _matches_any_pattern(track.title, config.title_suffix_patterns):
-        reasons.append(f"title_suffix:{matched}")
+    if matched := _matches_any_pattern(track.title, config.title_fake_patterns):
+        if not any(r.startswith("title_tag") for r in reasons):
+            reasons.append(f"title_tag:{matched}")
 
-    if config.treat_ugc_as_fake and track.is_user_upload:
-        reasons.append("user_upload")
+    combined = f"{track.title} {track.version or ''}"
+    if _has_version_words(combined, config) and not any("version" in r for r in reasons):
+        reasons.append("version:word")
 
     if reasons:
         return TrackStatus.FAKE, reasons

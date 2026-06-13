@@ -12,44 +12,99 @@ class PlaylistsConfig(BaseModel):
     exclude_kinds: list[int] = Field(default_factory=list)
 
 
+class PerformanceConfig(BaseModel):
+    track_workers: int = 8
+    artist_workers: int = 16
+    track_batch_size: int = 150
+    artist_disk_cache: bool = True
+    reuse_scan_cache: bool = False
+
+
 class DetectionConfig(BaseModel):
-    fake_version_patterns: list[str] = Field(
+    artist_match_threshold: float = 0.75
+    artist_ok_threshold: float = 0.88
+    duration_min_ratio: float = 0.85
+    duration_tolerance_ms: int = 10000
+    title_paren_fake_patterns: list[str] = Field(
         default_factory=lambda: [
-            r"radio\s*edit",
             r"cover",
             r"karaoke",
             r"tribute",
-            r"instrumental",
-            r"sped\s*up",
+            r"live",
+            r"tiktok",
+            r"radio",
+            r"edit",
+            r"sped",
+            r"speed",
             r"slowed",
             r"nightcore",
             r"\b8d\b",
-        ]
-    )
-    keep_version_patterns: list[str] = Field(
-        default_factory=lambda: [
+            r"reverb",
             r"remix",
-            r"acoustic",
-            r"from the series",
-            r"soundtrack",
-            r"\bost\b",
+            r"studio",
+            r"version",
+            r"instrumental",
         ]
     )
-    title_suffix_patterns: list[str] = Field(
+    title_fake_patterns: list[str] = Field(
         default_factory=lambda: [
-            r"\(cover\)",
-            r"\(radio edit\)",
-            r"\[karaoke\]",
+            r"[\(\[]\s*cover\s*[\)\]]",
+            r"[\(\[]\s*karaoke\s*[\)\]]",
+            r"[\(\[]\s*tribute\s*[\)\]]",
+            r"[\(\[]\s*live\s*[\)\]]",
+            r"[\(\[]\s*tiktok[^)\]]*[\)\]]",
+            r"[\(\[]\s*radio[^)\]]*[\)\]]",
+            r"[\(\[]\s*8d[^)\]]*[\)\]]",
+            r"[\(\[]\s*slowed[^)\]]*[\)\]]",
+            r"[\(\[]\s*sped[^)\]]*[\)\]]",
+            r"[\(\[]\s*nightcore\s*[\)\]]",
+            r"[\(\[]\s*studio\s*version\s*[\)\]]",
+            r"\bcover\s+version\b",
+            r"\btiktok\s+version\b",
+            r"\b8d\b",
         ]
     )
-    treat_ugc_as_fake: bool = False
-    treat_replaced_to_ugc: bool = True
+    suspicious_artist_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"tribute",
+            r"karaoke",
+            r"\b8d\b",
+            r"tiktok",
+            r"rhythm\s*rebel",
+            r"ameritz",
+            r"live\s*beat",
+            r"sky\s*trucking",
+            r"funky\s*groove",
+            r"lil\s*flop",
+            r"jxctis",
+            r"\bcover\b",
+            r"reverb",
+            r"studio\s*version",
+            r"xtm\s*remix",
+            r"remix\s*edit",
+            r"sunbeams",
+            r"tim\s*mahendran",
+            r"zxctis",
+            r"jxctis",
+        ]
+    )
+    version_word_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"\bversion\b",
+            r"\bedit\b",
+        ]
+    )
+
+    @property
+    def title_suffix_patterns(self) -> list[str]:
+        return list(self.title_fake_patterns)
 
 
 class AppConfig(BaseModel):
     token_env: str = "YANDEX_MUSIC_TOKEN"
     playlists: PlaylistsConfig = Field(default_factory=PlaylistsConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
+    performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
 
     def get_token(self, override: Optional[str] = None) -> str:
         if override:

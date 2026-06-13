@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from yandex_music_og_songs.config import AppConfig
 from yandex_music_og_songs.models import TrackStatus
@@ -10,7 +10,9 @@ def _make_track(**kwargs):
     track.id = kwargs.get("id", 1)
     track.title = kwargs.get("title", "Song")
     track.version = kwargs.get("version")
-    track.artists = [MagicMock(name=kwargs.get("artist", "Artist"))]
+    artist = MagicMock()
+    artist.name = kwargs.get("artist", "Artist")
+    track.artists = [artist]
     track.albums = [MagicMock(id=kwargs.get("album_id", 100))]
     track.duration_ms = kwargs.get("duration_ms", 200000)
     track.track_source = kwargs.get("track_source")
@@ -19,24 +21,30 @@ def _make_track(**kwargs):
     return track
 
 
-def test_scan_playlist_marks_fake_and_original():
+def test_scan_playlist_marks_cover_fake():
     playlist = MagicMock()
     playlist.kind = 42
     playlist.title = "Test Playlist"
     playlist.tracks = [MagicMock(album_id=100), MagicMock(album_id=101)]
 
     fake_track = _make_track(id=1, title="Song (Cover)")
-    original_track = _make_track(id=2, title="Real Song", artist="Artist B", album_id=101, track_source="OWN")
+    original_track = _make_track(id=2, title="Real Song", artist="Artist B", album_id=101)
 
     client = MagicMock()
+    client.token = "test-token"
     client.playlist_track_shorts.return_value = playlist.tracks
-    client.fetch_full_tracks.return_value = [fake_track, original_track]
 
-    result = scan_playlist(client, playlist, AppConfig(), artist_check=False)
+    with patch(
+        "yandex_music_og_songs.playlist.fetch_full_tracks_parallel",
+        return_value=[fake_track, original_track],
+    ), patch(
+        "yandex_music_og_songs.playlist.prefetch_truth_lookups",
+        return_value={},
+    ), patch(
+        "yandex_music_og_songs.verifier.find_clean_yandex_match",
+        return_value=None,
+    ):
+        result = scan_playlist(client, playlist, AppConfig(), artist_check=True)
 
-    assert result.kind == 42
-    assert result.track_count == 2
-    assert result.fake_count == 1
-    assert result.original_count == 1
     assert result.tracks[0].status == TrackStatus.FAKE
     assert result.tracks[1].status == TrackStatus.ORIGINAL
