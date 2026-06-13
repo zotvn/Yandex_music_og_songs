@@ -16,41 +16,34 @@ class PerformanceConfig(BaseModel):
     track_workers: int = 8
     artist_workers: int = 16
     track_batch_size: int = 150
-    musicbrainz_mode: Literal["auto", "always", "never"] = "auto"
     artist_disk_cache: bool = True
-    reuse_scan_cache: bool = True
+    reuse_scan_cache: bool = False
 
 
 class DetectionConfig(BaseModel):
-    fake_version_patterns: list[str] = Field(
-        default_factory=lambda: [
-            r"radio\s*[-_]?\s*edit",
-            r"cover",
-            r"karaoke",
-            r"tribute",
-            r"instrumental",
-            r"sped\s*[-_]?\s*up",
-            r"speed\s*[-_]?\s*up",
-            r"slowed(?:\s*(?:&|and)\s*reverb)?",
-            r"nightcore",
-            r"\b8d\b",
-            r"reverb(?:\s*only)?",
-        ]
-    )
-    keep_version_patterns: list[str] = Field(
-        default_factory=lambda: [
-            r"remix",
-            r"acoustic",
-            r"from the series",
-            r"soundtrack",
-            r"\bost\b",
-        ]
-    )
+    artist_match_threshold: float = 0.75
+    artist_ok_threshold: float = 0.88
+    duration_min_ratio: float = 0.85
+    duration_tolerance_ms: int = 10000
     title_paren_fake_patterns: list[str] = Field(
         default_factory=lambda: [
             r"cover",
             r"karaoke",
             r"tribute",
+            r"live",
+            r"tiktok",
+            r"radio",
+            r"edit",
+            r"sped",
+            r"speed",
+            r"slowed",
+            r"nightcore",
+            r"\b8d\b",
+            r"reverb",
+            r"remix",
+            r"studio",
+            r"version",
+            r"instrumental",
         ]
     )
     title_fake_patterns: list[str] = Field(
@@ -58,19 +51,17 @@ class DetectionConfig(BaseModel):
             r"[\(\[]\s*cover\s*[\)\]]",
             r"[\(\[]\s*karaoke\s*[\)\]]",
             r"[\(\[]\s*tribute\s*[\)\]]",
+            r"[\(\[]\s*live\s*[\)\]]",
+            r"[\(\[]\s*tiktok[^)\]]*[\)\]]",
+            r"[\(\[]\s*radio[^)\]]*[\)\]]",
+            r"[\(\[]\s*8d[^)\]]*[\)\]]",
+            r"[\(\[]\s*slowed[^)\]]*[\)\]]",
+            r"[\(\[]\s*sped[^)\]]*[\)\]]",
+            r"[\(\[]\s*nightcore\s*[\)\]]",
+            r"[\(\[]\s*studio\s*version\s*[\)\]]",
             r"\bcover\s+version\b",
-        ]
-    )
-    title_ask_patterns: list[str] = Field(
-        default_factory=lambda: [
-            r"radio\s*[-_]?\s*edit",
-            r"sped\s*[-_]?\s*up",
-            r"speed\s*[-_]?\s*up",
-            r"slowed",
-            r"nightcore",
+            r"\btiktok\s+version\b",
             r"\b8d\b",
-            r"reverb",
-            r"pitch\s*shift",
         ]
     )
     suspicious_artist_patterns: list[str] = Field(
@@ -93,24 +84,20 @@ class DetectionConfig(BaseModel):
             r"remix\s*edit",
             r"sunbeams",
             r"tim\s*mahendran",
+            r"zxctis",
+            r"jxctis",
         ]
     )
-    duration_tolerance_ms: int = 5000
-    duration_tolerance_ratio: float = 0.05
-    treat_ugc_as_fake: bool = False
-    treat_replaced_to_ugc: bool = False
+    version_word_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"\bversion\b",
+            r"\bedit\b",
+        ]
+    )
 
     @property
     def title_suffix_patterns(self) -> list[str]:
-        """Patterns stripped from titles before artist lookup."""
-        return list(self.title_fake_patterns) + [
-            r"[\(\[]\s*radio\s*[-_]?\s*edit\s*[\)\]]",
-            r"[\(\[]\s*sped\s*[-_]?\s*up\s*[\)\]]",
-            r"[\(\[]\s*speed\s*[-_]?\s*up\s*[\)\]]",
-            r"[\(\[]\s*slowed[^)\]]*[\)\]]",
-            r"[\(\[]\s*nightcore\s*[\)\]]",
-            r"[\(\[]\s*8d\s*[\)\]]",
-        ]
+        return list(self.title_fake_patterns)
 
 
 class AppConfig(BaseModel):

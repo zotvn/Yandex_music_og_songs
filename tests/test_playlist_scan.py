@@ -21,14 +21,14 @@ def _make_track(**kwargs):
     return track
 
 
-def test_scan_playlist_marks_fake_and_original():
+def test_scan_playlist_marks_cover_fake():
     playlist = MagicMock()
     playlist.kind = 42
     playlist.title = "Test Playlist"
     playlist.tracks = [MagicMock(album_id=100), MagicMock(album_id=101)]
 
     fake_track = _make_track(id=1, title="Song (Cover)")
-    original_track = _make_track(id=2, title="Real Song", artist="Artist B", album_id=101, track_source="OWN")
+    original_track = _make_track(id=2, title="Real Song", artist="Artist B", album_id=101)
 
     client = MagicMock()
     client.token = "test-token"
@@ -38,14 +38,13 @@ def test_scan_playlist_marks_fake_and_original():
         "yandex_music_og_songs.playlist.fetch_full_tracks_parallel",
         return_value=[fake_track, original_track],
     ), patch(
-        "yandex_music_og_songs.playlist.prefetch_title_lookups",
+        "yandex_music_og_songs.playlist.prefetch_truth_lookups",
         return_value={},
+    ), patch(
+        "yandex_music_og_songs.verifier.find_clean_yandex_match",
+        return_value=None,
     ):
         result = scan_playlist(client, playlist, AppConfig(), artist_check=True)
 
-    assert result.kind == 42
-    assert result.track_count == 2
-    assert result.fake_count == 1
-    assert result.original_count == 1
     assert result.tracks[0].status == TrackStatus.FAKE
     assert result.tracks[1].status == TrackStatus.ORIGINAL

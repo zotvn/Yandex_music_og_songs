@@ -12,7 +12,9 @@ from yandex_music_og_songs.models import (
 )
 
 
-def scan_cache_path(kind: int) -> Path:
+def scan_cache_path(kind: int, suffix: str = "") -> Path:
+    if suffix:
+        return Path(f"scan_{kind}_{suffix}.json")
     return Path(f"scan_{kind}.json")
 
 
@@ -27,6 +29,8 @@ def save_scan_result(result: PlaylistScanResult, path: Path) -> None:
                 "status": item.status.value,
                 "reasons": item.reasons,
                 "expected_artist": item.expected_artist,
+                "replace_track_id": item.replace_track_id,
+                "replace_album_id": item.replace_album_id,
                 "artist_candidates": [
                     {"artist": c.artist, "sources": list(c.sources), "score": c.score}
                     for c in item.artist_candidates
@@ -59,6 +63,8 @@ def load_scan_result(path: Path) -> PlaylistScanResult:
                 status=TrackStatus(item["status"]),
                 reasons=item.get("reasons", []),
                 expected_artist=item.get("expected_artist"),
+                replace_track_id=item.get("replace_track_id"),
+                replace_album_id=item.get("replace_album_id"),
                 artist_candidates=[
                     ArtistCandidate(
                         artist=c["artist"],
@@ -84,4 +90,26 @@ def load_scan_result(path: Path) -> PlaylistScanResult:
         title=data["title"],
         track_count=data["track_count"],
         tracks=tracks,
+    )
+
+
+def merge_scan_results(paths: list[Path]) -> PlaylistScanResult:
+    if not paths:
+        raise ValueError("Нет файлов для merge")
+
+    loaded = [load_scan_result(path) for path in paths]
+    base = loaded[0]
+    tracks_by_index = {item.index: item for item in base.tracks}
+    for result in loaded[1:]:
+        if result.kind != base.kind:
+            raise ValueError("Разные kind в файлах merge")
+        for item in result.tracks:
+            tracks_by_index[item.index] = item
+
+    merged_tracks = [tracks_by_index[key] for key in sorted(tracks_by_index)]
+    return PlaylistScanResult(
+        kind=base.kind,
+        title=base.title,
+        track_count=len(merged_tracks),
+        tracks=merged_tracks,
     )

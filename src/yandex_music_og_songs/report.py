@@ -32,10 +32,13 @@ def status_label(status: TrackStatus) -> str:
 def format_track_line(item: ScannedTrack) -> str:
     reasons = f" ({', '.join(item.reasons)})" if item.reasons else ""
     expected = f" -> {item.expected_artist}" if item.expected_artist else ""
+    og = ""
+    if item.replace_track_id:
+        og = f" OG:{item.replace_track_id}"
     return (
         f"{item.index + 1:>4}. [{status_label(item.status):<4}] "
         f"{format_track_label(item)} "
-        f"[{format_duration(item.track.duration_ms)}]{expected}{reasons}"
+        f"[{format_duration(item.track.duration_ms)}]{expected}{og}{reasons}"
     )
 
 
@@ -52,14 +55,37 @@ def print_scan_summary(result: PlaylistScanResult, file: TextIO = sys.stdout) ->
     print("-" * 72, file=file, flush=True)
     print(
         f"Итого: {result.track_count} | ok: {result.original_count} | "
-        f"fake: {result.fake_count} | choose: {result.choose_count} | skip: {result.skip_count}",
+        f"fake: {result.fake_count} | choose: {result.choose_count} | "
+        f"skip: {result.skip_count} | og_in_ya: {result.og_in_ya_count}",
         file=file,
         flush=True,
     )
 
 
-def _is_version_choice(item: ScannedTrack) -> bool:
-    return any(reason.startswith("pick_version") for reason in item.reasons)
+def format_fake_section(result: PlaylistScanResult) -> list[str]:
+    fake_tracks = [item for item in result.tracks if item.status == TrackStatus.FAKE]
+    if not fake_tracks:
+        return []
+
+    lines = [
+        "",
+        "=" * 72,
+        "FAKE — choices.txt:  N: skip (оставить)  или  N: replace (заменить)",
+        "=" * 72,
+    ]
+    for item in fake_tracks:
+        lines.append(f"{item.index + 1}. {format_track_label(item)}")
+        if item.replace_track_id:
+            lines.append(f"     OG in ya: {item.replace_track_id}:{item.replace_album_id or '?'}")
+        else:
+            lines.append("     нет clean-версии в Яндексе")
+    lines.append("")
+    return lines
+
+
+def print_fake_section(result: PlaylistScanResult, file: TextIO = sys.stdout) -> None:
+    for line in format_fake_section(result):
+        print(line, file=file, flush=True)
 
 
 def format_choices_section(result: PlaylistScanResult) -> list[str]:
@@ -67,43 +93,18 @@ def format_choices_section(result: PlaylistScanResult) -> list[str]:
     if not choose_tracks:
         return []
 
-    artist_tracks = [item for item in choose_tracks if not _is_version_choice(item)]
-    version_tracks = [item for item in choose_tracks if _is_version_choice(item)]
-
-    lines: list[str] = [""]
-
-    if artist_tracks:
-        lines.extend(
-            [
-                "=" * 72,
-                "НУЖЕН ВЫБОР ИСПОЛНИТЕЛЯ",
-                "choices.txt:  28: 1   или   28: skip",
-                "=" * 72,
-            ]
-        )
-        for item in artist_tracks:
-            lines.append(f"{item.index + 1}. {format_track_label(item)}")
-            for idx, candidate in enumerate(item.artist_candidates, start=1):
-                sources = ", ".join(candidate.sources)
-                lines.append(f"     {idx}) {candidate.artist} [{sources}]")
-
-    if version_tracks:
-        lines.extend(
-            [
-                "=" * 72,
-                "НУЖЕН ВЫБОР ВЕРСИИ (в скобках)",
-                "choices.txt:  15: skip (оставить)   или   15: replace (заменить)",
-                "=" * 72,
-            ]
-        )
-        for item in version_tracks:
-            lines.append(f"{item.index + 1}. {format_track_label(item)}")
-            suffix = next(
-                (reason.split(":", 1)[1] for reason in item.reasons if reason.startswith("pick_version")),
-                "версия",
-            )
-            lines.append(f"     ?) {suffix}")
-
+    lines = [
+        "",
+        "=" * 72,
+        "НУЖЕН ВЫБОР ИСПОЛНИТЕЛЯ",
+        "choices.txt:  28: 1   или   28: skip",
+        "=" * 72,
+    ]
+    for item in choose_tracks:
+        lines.append(f"{item.index + 1}. {format_track_label(item)}")
+        for idx, candidate in enumerate(item.artist_candidates, start=1):
+            sources = ", ".join(candidate.sources)
+            lines.append(f"     {idx}) {candidate.artist} [{sources}]")
     lines.append("")
     return lines
 
@@ -119,11 +120,13 @@ def format_scan_text(results: Iterable[PlaylistScanResult]) -> str:
         lines.append(f"Playlist: {result.title} (kind={result.kind})")
         lines.append(
             f"Tracks: {result.track_count} | ok: {result.original_count} | "
-            f"fake: {result.fake_count} | choose: {result.choose_count} | skip: {result.skip_count}"
+            f"fake: {result.fake_count} | choose: {result.choose_count} | "
+            f"skip: {result.skip_count} | og_in_ya: {result.og_in_ya_count}"
         )
         lines.append("-" * 72)
         for item in result.tracks:
             lines.append(format_track_line(item))
+        lines.extend(format_fake_section(result))
         lines.extend(format_choices_section(result))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"

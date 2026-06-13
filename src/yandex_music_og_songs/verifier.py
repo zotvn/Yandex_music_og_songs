@@ -3,13 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from yandex_music_og_songs.artist_resolver import resolve_with_candidates
-from yandex_music_og_songs.catalog import (
-    best_official_artist,
-    catalog_confirms_original,
-    is_suspicious_artist,
-    official_catalog_signal,
+from yandex_music_og_songs.artist_resolver import (
+    artist_matches,
+    pick_expected_artist,
+    resolve_with_candidates,
 )
+from yandex_music_og_songs.catalog import (
+    find_clean_yandex_match,
+    is_suspicious_artist,
+    is_user_original,
+)
+from yandex_music_og_songs.client import YandexMusicClient
 from yandex_music_og_songs.config import DetectionConfig
 from yandex_music_og_songs.detector import detect_track
 from yandex_music_og_songs.models import ArtistCandidate, TitleLookup, TrackRef, TrackStatus
@@ -22,134 +26,116 @@ class VerifyResult:
     reasons: list[str]
     candidates: list[ArtistCandidate]
     expected_artist: Optional[str]
-
-
-_VERSION_HINTS = ("version:", "title_fake:", "track_source:", "user_upload")
+    replace_track_id: Optional[str] = None
+    replace_album_id: Optional[str] = None
 
 
 def lookup_cache_key(title: str, detection: DetectionConfig) -> str:
     return normalize_text(base_title(title, detection.title_suffix_patterns))
 
 
-def _only_version_hints(reasons: list[str]) -> bool:
-    return bool(reasons) and all(
-        r.startswith("pick_version") or any(r.startswith(p) for p in _VERSION_HINTS) for r in reasons
-    )
-
-
 def _prioritize_reasons(reasons: list[str]) -> list[str]:
-    artist = [r for r in reasons if r.startswith("wrong_artist:") or r == "suspicious_artist"]
+    artist = [r for r in reasons if r.startswith("wrong_artist:")]
     if artist:
         return artist
-    choose = [r for r in reasons if r == "pick_artist"]
-    if choose:
-        return choose + [r for r in reasons if r.startswith("pick_version")]
-    version = [r for r in reasons if r.startswith("pick_version")]
-    if version:
-        return version
+    tags = [r for r in reasons if r.startswith("title_tag:") or r.startswith("version:")]
+    if tags:
+        return tags
     return reasons
+
+
+def _attach_replacement(
+    client: YandexMusicClient,
+    track: TrackRef,
+    detection: DetectionConfig,
+    expected_artist: str,
+    status: TrackStatus,
+    reasons: list[str],
+    candidates: list[ArtistCandidate],
+) -> VerifyResult:
+    clean_title = base_title(track.title, detection.title_suffix_patterns)
+    match = find_clean_yandex_match(client, expected_artist, clean_title, track.duration_ms, detection)
+    if match and match.track_id:
+        final_reasons = _prioritize_reasons(reasons)
+        if "og_in_ya" not in final_reasons:
+            final_reasons = [*final_reasons, "og_in_ya"]
+        return VerifyResult(
+            status=status,
+            reasons=final_reasons,
+            candidates=candidates,
+            expected_artist=expected_artist,
+            replace_track_id=match.track_id,
+            replace_album_id=match.album_id,
+        )
+    return VerifyResult(
+        status=status,
+        reasons=[*_prioritize_reasons(reasons), "no_clean_yandex_match"],
+        candidates=candidates,
+        expected_artist=expected_artist,
+    )
 
 
 def verify_track(
     track: TrackRef,
     detection: DetectionConfig,
-    lookup: TitleLookup | None,
+    truth: TitleLookup | None,
+    client: YandexMusicClient,
 ) -> VerifyResult:
-    det_status, det_reasons = detect_track(track, detection)
-
-    if track.is_user_upload:
+    if is_user_original(track):
         return VerifyResult(TrackStatus.ORIGINAL, [], [], track.artist)
 
-    if lookup and lookup.hits:
-        confirmed = catalog_confirms_original(track, lookup.hits, detection)
-        if confirmed:
-            return VerifyResult(TrackStatus.ORIGINAL, [], lookup.candidates, confirmed.artist)
-
-    if det_status == TrackStatus.CHOOSE and _only_version_hints(det_reasons):
-        return VerifyResult(det_status, det_reasons, [], None)
+    _det_status, local_reasons = detect_track(track, detection)
+    candidates = truth.candidates if truth else []
+    threshold = detection.artist_match_threshold
 
     if is_suspicious_artist(track.artist, detection):
-        official = None
-        if lookup:
-            official = best_official_artist(
-                lookup.hits,
-                base_title(track.title, detection.title_suffix_patterns),
-                detection,
-            )
-        if official:
-            return VerifyResult(
-                TrackStatus.FAKE,
-                [f"wrong_artist:{official}", "suspicious_artist"],
-                lookup.candidates if lookup else [],
-                official,
-            )
+        expected = pick_expected_artist(candidates)
+        reasons = list(local_reasons)
+        if expected:
+            reasons.append(f"wrong_artist:{expected}")
+        else:
+            reasons.append("suspicious_artist")
+        if expected:
+            return _attach_replacement(client, track, detection, expected, TrackStatus.FAKE, reasons, candidates)
+        return VerifyResult(TrackStatus.FAKE, _prioritize_reasons(reasons), candidates, None)
+
+    resolution = (
+        resolve_with_candidates(track, candidates, threshold, detection.artist_ok_threshold)
+        if candidates
+        else None
+    )
+
+    if resolution and resolution.status == TrackStatus.CHOOSE:
         return VerifyResult(
-            TrackStatus.FAKE,
-            ["suspicious_artist"],
-            lookup.candidates if lookup else [],
+            TrackStatus.CHOOSE,
+            ["pick_artist", *local_reasons],
+            resolution.candidates,
             None,
         )
 
-    if lookup is None:
-        if det_reasons:
-            return VerifyResult(det_status, _prioritize_reasons(det_reasons), [], None)
-        return VerifyResult(TrackStatus.ORIGINAL, [], [], track.artist)
+    fake_reasons = list(local_reasons)
+    expected = resolution.expected_artist if resolution else pick_expected_artist(candidates)
 
-    resolution = resolve_with_candidates(track, lookup.candidates)
-    clean_title = base_title(track.title, detection.title_suffix_patterns)
+    if resolution and resolution.status == TrackStatus.FAKE:
+        fake_reasons.extend(resolution.reasons)
+    elif resolution and resolution.status == TrackStatus.ORIGINAL and not local_reasons:
+        return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected)
 
-    if resolution.status == TrackStatus.ORIGINAL and official_catalog_signal(lookup.hits, clean_title, detection) < 2:
-        official = best_official_artist(lookup.hits, clean_title, detection)
-        if official:
-            from yandex_music_og_songs.normalizer import text_similarity
+    if not fake_reasons and resolution and resolution.status == TrackStatus.ORIGINAL:
+        return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected)
 
-            if text_similarity(track.artist, official) < 0.82:
-                return VerifyResult(
-                    TrackStatus.FAKE,
-                    [f"wrong_artist:{official}"],
-                    lookup.candidates,
-                    official,
-                )
+    if not fake_reasons:
+        if not candidates:
+            return VerifyResult(TrackStatus.ORIGINAL, ["artist_unknown"], [], None)
+        return VerifyResult(TrackStatus.ORIGINAL, [], candidates, expected)
 
-    if resolution.status == TrackStatus.ORIGINAL:
-        if det_status == TrackStatus.CHOOSE:
-            return VerifyResult(det_status, det_reasons, resolution.candidates, resolution.expected_artist)
-        if det_status == TrackStatus.FAKE and _only_version_hints(det_reasons):
-            if any(r.startswith("wrong_artist:") for r in resolution.reasons):
-                return VerifyResult(
-                    TrackStatus.FAKE,
-                    _prioritize_reasons(resolution.reasons),
-                    resolution.candidates,
-                    resolution.expected_artist,
-                )
-            return VerifyResult(
-                TrackStatus.FAKE,
-                _prioritize_reasons(det_reasons),
-                resolution.candidates,
-                resolution.expected_artist,
-            )
-        return VerifyResult(TrackStatus.ORIGINAL, [], resolution.candidates, resolution.expected_artist)
-
-    if any(r.startswith("wrong_artist:") for r in resolution.reasons):
-        return VerifyResult(
-            resolution.status,
-            _prioritize_reasons(resolution.reasons),
-            resolution.candidates,
-            resolution.expected_artist,
-        )
-
-    if det_reasons and resolution.status != TrackStatus.CHOOSE:
-        merged = _prioritize_reasons([*resolution.reasons, *det_reasons])
-        return VerifyResult(
-            TrackStatus.FAKE if merged else TrackStatus.ORIGINAL,
-            merged,
-            resolution.candidates,
-            resolution.expected_artist,
-        )
+    status = TrackStatus.FAKE
+    if expected:
+        return _attach_replacement(client, track, detection, expected, status, fake_reasons, candidates)
 
     return VerifyResult(
-        resolution.status,
-        _prioritize_reasons(resolution.reasons),
-        resolution.candidates,
-        resolution.expected_artist,
+        status,
+        _prioritize_reasons(fake_reasons),
+        candidates,
+        None,
     )

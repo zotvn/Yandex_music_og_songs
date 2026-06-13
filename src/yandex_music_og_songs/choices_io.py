@@ -12,7 +12,7 @@ from yandex_music_og_songs.normalizer import normalize_text
 
 _CHOICE_RE = re.compile(r"^\s*(\d+)\s*:\s*(\S+)\s*$", re.IGNORECASE)
 _SKIP_VALUES = {"skip", "keep", "s", "0"}
-_REPLACE_VALUES = {"replace", "fake", "r", "2"}
+_REPLACE_VALUES = {"replace", "fake", "r", "1"}
 
 
 @dataclass(frozen=True)
@@ -21,38 +21,32 @@ class UserChoice:
     value: str
 
 
-def _is_version_choice(item: ScannedTrack) -> bool:
-    return any(reason.startswith("pick_version") for reason in item.reasons)
-
-
 def write_choices_template(result: PlaylistScanResult, path: Path) -> None:
     lines = [
-        "# Выбор исполнителя:",
-        "#   28: 1          — вариант из списка",
-        "#   28: sombr       — имя артиста",
-        "# Версия в скобках — оставить или заменить:",
-        "#   15: skip        — оставить как есть",
-        "#   15: replace     — заменить на оригинал",
-        "# Исключить из замены (оставить как есть):",
-        "#   15: skip",
+        "# FAKE — оставить или заменить:",
+        "#   94: skip      оставить как есть",
+        "#   94: replace   заменить (если есть replace_track_id)",
+        "# CHOOSE — выбрать артиста:",
+        "#   28: 1          вариант из списка",
+        "#   28: Adele       имя артиста",
         "",
     ]
 
     for item in result.tracks:
-        if item.status != TrackStatus.CHOOSE:
-            continue
-        lines.append(f"{item.index + 1}. {item.track.artist} - {item.track.title}")
-        if _is_version_choice(item):
-            suffix = next(
-                (reason.split(":", 1)[1] for reason in item.reasons if reason.startswith("pick_version")),
-                "версия",
-            )
-            lines.append(f"  ?) {suffix} — skip (оставить) или replace (заменить)")
-        else:
+        if item.status == TrackStatus.FAKE:
+            replace_hint = ""
+            if item.replace_track_id:
+                replace_hint = f" → {item.replace_track_id}:{item.replace_album_id or ''}"
+            lines.append(f"{item.index + 1}. {item.track.artist} - {item.track.title}")
+            lines.append(f"   FAKE: {', '.join(item.reasons)}{replace_hint}")
+            lines.append("")
+
+        elif item.status == TrackStatus.CHOOSE:
+            lines.append(f"{item.index + 1}. {item.track.artist} - {item.track.title}")
             for idx, candidate in enumerate(item.artist_candidates, start=1):
                 sources = ", ".join(candidate.sources)
                 lines.append(f"  {idx}) {candidate.artist} [{sources}]")
-        lines.append("")
+            lines.append("")
 
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
@@ -106,25 +100,14 @@ def apply_choices(result: PlaylistScanResult, choices: list[UserChoice]) -> Play
                     reasons=["skipped_by_user"],
                     artist_candidates=item.artist_candidates,
                     expected_artist=item.expected_artist,
+                    replace_track_id=item.replace_track_id,
+                    replace_album_id=item.replace_album_id,
                 )
             )
             continue
 
-        if item.status == TrackStatus.CHOOSE and choice is not None and _is_version_choice(item):
-            value = choice.value.lower()
-            if value in _REPLACE_VALUES:
-                updated.append(
-                    ScannedTrack(
-                        index=item.index,
-                        track=item.track,
-                        status=TrackStatus.FAKE,
-                        reasons=[*item.reasons, "replace_version_by_user"],
-                        artist_candidates=item.artist_candidates,
-                        expected_artist=item.expected_artist,
-                    )
-                )
-            else:
-                updated.append(item)
+        if item.status == TrackStatus.FAKE and choice and choice.value.lower() in _REPLACE_VALUES:
+            updated.append(item)
             continue
 
         if item.status == TrackStatus.CHOOSE and choice is not None:
@@ -133,9 +116,9 @@ def apply_choices(result: PlaylistScanResult, choices: list[UserChoice]) -> Play
                 updated.append(item)
                 continue
 
-            from yandex_music_og_songs.artist_resolver import _similarity
+            from yandex_music_og_songs.artist_resolver import artists_equivalent
 
-            if _similarity(item.track.artist, picked) >= 0.82:
+            if artists_equivalent(item.track.artist, picked, 0.88):
                 status = TrackStatus.ORIGINAL
                 reasons: list[str] = []
             else:
@@ -150,6 +133,8 @@ def apply_choices(result: PlaylistScanResult, choices: list[UserChoice]) -> Play
                     reasons=reasons,
                     artist_candidates=item.artist_candidates,
                     expected_artist=picked,
+                    replace_track_id=item.replace_track_id,
+                    replace_album_id=item.replace_album_id,
                 )
             )
             continue

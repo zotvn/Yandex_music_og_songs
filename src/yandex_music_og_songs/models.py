@@ -40,13 +40,14 @@ class CatalogHit:
     artist: str
     title: str
     duration_ms: int | None
+    track_id: str | None = None
+    album_id: str | None = None
     version: str | None = None
 
 
 @dataclass(frozen=True)
 class TitleLookup:
     candidates: list[ArtistCandidate]
-    hits: list[CatalogHit]
 
 
 @dataclass
@@ -57,6 +58,8 @@ class ScannedTrack:
     reasons: list[str] = field(default_factory=list)
     artist_candidates: list[ArtistCandidate] = field(default_factory=list)
     expected_artist: Optional[str] = None
+    replace_track_id: Optional[str] = None
+    replace_album_id: Optional[str] = None
 
 
 @dataclass
@@ -81,3 +84,7 @@ class PlaylistScanResult:
     @property
     def skip_count(self) -> int:
         return sum(1 for t in self.tracks if t.status == TrackStatus.SKIP)
+
+    @property
+    def og_in_ya_count(self) -> int:
+        return sum(1 for t in self.tracks if t.replace_track_id)

@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from yandex_music_og_songs.models import ArtistCandidate, CatalogHit, TitleLookup
+from yandex_music_og_songs.models import ArtistCandidate, TitleLookup
 
 _DEFAULT_PATH = Path(".cache/artist_lookups.json")
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
 
 
 def artist_cache_path(custom: Path | None = None) -> Path:
@@ -18,15 +18,6 @@ def _serialize_lookup(lookup: TitleLookup) -> dict:
         "candidates": [
             {"artist": c.artist, "sources": list(c.sources), "score": c.score}
             for c in lookup.candidates
-        ],
-        "hits": [
-            {
-                "artist": h.artist,
-                "title": h.title,
-                "duration_ms": h.duration_ms,
-                "version": h.version,
-            }
-            for h in lookup.hits
         ],
     }
 
@@ -40,16 +31,7 @@ def _deserialize_lookup(data: dict) -> TitleLookup:
         )
         for item in data.get("candidates", [])
     ]
-    hits = [
-        CatalogHit(
-            artist=item["artist"],
-            title=item["title"],
-            duration_ms=item.get("duration_ms"),
-            version=item.get("version"),
-        )
-        for item in data.get("hits", [])
-    ]
-    return TitleLookup(candidates=candidates, hits=hits)
+    return TitleLookup(candidates=candidates)
 
 
 class ArtistLookupCache:
