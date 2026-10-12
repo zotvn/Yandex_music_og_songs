@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yandex-music-og-songs"
 version = "0.1.0"
-description = "Auto replace fake Yandex Music tracks with originals"
+description = "Scan Yandex Music playlists for fake/wrong tracks and prepare replacements"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
