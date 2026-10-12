@@ -1,7 +1,10 @@
+# Пример настроек. Сейчас CLI использует дефолты из кода (AppConfig),
+# этот файл пока не подхватывается автоматически — ориентир для будущей загрузки.
+
 token_env: YANDEX_MUSIC_TOKEN
 
 playlists:
-  mode: all          # all | selected | exclude
+  mode: all          # all | selected | exclude  (задел; CLI пока берёт KIND из аргумента)
   kinds: []
   exclude_kinds: []
 
@@ -19,18 +22,17 @@ detection:
   keep_version_patterns:
     - remix
     - acoustic
+    - from the series
+    - soundtrack
+    - \bost\b
   title_suffix_patterns:
     - '\(cover\)'
     - '\(radio edit\)'
     - '\[karaoke\]'
-  treat_ugc_as_fake: true
+  # В коде по умолчанию false; true — все user uploads считаются FAKE
+  treat_ugc_as_fake: false
   treat_replaced_to_ugc: true
-  duration_shorter_threshold: 0.15
 
-artist:
-  mode: optional     # off | optional | strict | warn_only
-  fuzzy_threshold: 0.85
-  whitelist: []
-
-apply:
-  dry_run: true
+# Задел: автозамена треков в плейлисте ещё не реализована
+# apply:
+#   dry_run: true
